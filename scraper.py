@@ -1,17 +1,17 @@
 """
-Citadel Securities Global Market Intelligence 爬蟲
-- 使用 MongoDB 儲存
-- OpenAI 翻譯（雙語呈現）
-- Gmail 郵件發送
-- 圖片上傳到 GitHub
+Citadel Securities 新聞爬蟲
+- 支持多個系列：Global Market Intelligence、Macro Thoughts
+- 使用 Async Playwright 提升性能
+- MongoDB 儲存、OpenAI 翻譯、Gmail 郵件、GitHub 圖床
 """
 
 import os
 import json
 import logging
 import hashlib
+import asyncio
 from datetime import datetime
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 import time
 import argparse
 from dotenv import load_dotenv
@@ -65,6 +65,23 @@ def setup_logging():
 
 # 創建全局 logger
 logger, log_file = setup_logging()
+
+
+# 系列配置
+SERIES_CONFIG = {
+    'global-market-intelligence': {
+        'name': 'Global Market Intelligence',
+        'name_zh': '全球市場情報',
+        'url': 'https://www.citadelsecurities.com/news-and-insights/series/global-market-intelligence/',
+        'emoji': '📊'
+    },
+    'macro-thoughts': {
+        'name': 'Macro Thoughts',
+        'name_zh': '宏觀思考',
+        'url': 'https://www.citadelsecurities.com/news-and-insights/series/macro-thoughts/',
+        'emoji': '🌍'
+    }
+}
 
 
 class GitHubImageUploader:
@@ -165,18 +182,20 @@ class ContentElement:
 
 
 class CitadelScraper:
-    def __init__(self, test_mode=False):
+    def __init__(self, test_mode=False, series_list=None):
         # 加載環境變量
         load_dotenv()
         logger.info("=" * 70)
         logger.info("初始化 Citadel Scraper")
         logger.info("=" * 70)
         
-        self.base_url = "https://www.citadelsecurities.com/news-and-insights/series/global-market-intelligence/"
         self.test_mode = test_mode
+        self.series_list = series_list or ['global-market-intelligence']  # 默認抓取 GMI
         
         if test_mode:
             logger.warning("測試模式已啟用 - 不會保存到 MongoDB")
+        
+        logger.info(f"將抓取以下系列: {', '.join([SERIES_CONFIG[s]['name'] for s in self.series_list])}")
         
         # MongoDB 配置
         logger.debug("配置 MongoDB 連接...")
@@ -238,8 +257,8 @@ class CitadelScraper:
         logger.debug(f"URL 重複檢查: {url} - {'已存在' if exists else '新文章'}")
         return exists
     
-    def scrape_content_with_order(self, page):
-        """按順序抓取內容（文字和圖片）"""
+    async def scrape_content_with_order(self, page):
+        """按順序抓取內容（文字和圖片）- Async 版本"""
         logger.info("按順序抓取文章內容...")
         
         try:
@@ -250,7 +269,7 @@ class CitadelScraper:
             content_section = page.locator('div.section-intro.is-top-padding.is-bottom-padding').first
             
             # 使用 JavaScript 獲取所有子元素（文字段落和圖片）
-            elements = content_section.evaluate('''
+            elements = await content_section.evaluate('''
                 (element) => {
                     const result = [];
                     const walker = document.createTreeWalker(
@@ -458,7 +477,11 @@ class CitadelScraper:
             msg = MIMEMultipart('alternative')
             msg['From'] = self.mail_token
             msg['To'] = ', '.join(self.recipients)
-            msg['Subject'] = f"📰 Citadel Securities GMI - {article_data['title']}"
+            
+            # 郵件主題包含系列名稱
+            series_emoji = article_data.get('series_emoji', '📰')
+            series_name_zh = article_data.get('series_name_zh', '')
+            msg['Subject'] = f"{series_emoji} Citadel Securities - {series_name_zh} - {article_data['title']}"
             
             # 生成 HTML 內容
             html_content = self._generate_html_email(article_data, content_elements, translation_map)
@@ -485,6 +508,10 @@ class CitadelScraper:
         """生成 HTML 郵件內容（使用 GitHub 圖片連結）"""
         html_parts = []
         
+        series_emoji = article_data.get('series_emoji', '📰')
+        series_name = article_data.get('series_name', 'News')
+        series_name_zh = article_data.get('series_name_zh', '新聞')
+        
         html_parts.append(f"""
 <!DOCTYPE html>
 <html>
@@ -505,6 +532,16 @@ class CitadelScraper:
             padding: 40px;
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }}
+        .series-badge {{
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+            font-weight: 600;
         }}
         h1 {{
             color: #1a1a1a;
@@ -583,7 +620,8 @@ class CitadelScraper:
 </head>
 <body>
     <div class="container">
-        <h1>📰 {article_data['title']}</h1>
+        <div class="series-badge">{series_emoji} {series_name} / {series_name_zh}</div>
+        <h1>{article_data['title']}</h1>
         
         <div class="meta">
             <strong>發布日期 / Date:</strong> {article_data['date']}<br>
@@ -611,7 +649,6 @@ class CitadelScraper:
                 
             elif element.type == 'image':
                 # 圖片（確保使用 GitHub raw URL）
-                # element.content 已經在 process_content_elements 中被替換為 GitHub URL
                 github_url = element.content
                 
                 # 驗證是否為 GitHub URL
@@ -630,7 +667,7 @@ class CitadelScraper:
         html_parts.append("""
         <div class="footer">
             此郵件由 Citadel Securities 新聞爬蟲自動發送<br>
-            圖片永久保存於 GitHub | Powered by Python + Playwright + OpenAI
+            圖片永久保存於 GitHub | Powered by Async Playwright + OpenAI
         </div>
     </div>
 </body>
@@ -639,29 +676,35 @@ class CitadelScraper:
         
         return ''.join(html_parts)
     
-    def scrape(self):
-        """執行爬蟲任務"""
+    async def scrape_series(self, series_key):
+        """抓取單個系列的最新文章 - Async 版本"""
+        series_config = SERIES_CONFIG[series_key]
+        base_url = series_config['url']
+        series_name = series_config['name']
+        series_name_zh = series_config['name_zh']
+        series_emoji = series_config['emoji']
+        
         logger.info("\n" + "=" * 70)
-        logger.info("開始執行爬蟲任務")
+        logger.info(f"開始抓取系列: {series_emoji} {series_name} ({series_name_zh})")
         logger.info("=" * 70)
         
-        with sync_playwright() as p:
+        async with async_playwright() as p:
             logger.debug("啟動瀏覽器 (Chromium headless)")
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
             
             try:
-                logger.info(f"訪問目標網站: {self.base_url}")
-                page.goto(self.base_url, timeout=60000)
+                logger.info(f"訪問目標網站: {base_url}")
+                await page.goto(base_url, timeout=60000)
                 
                 # 等待頁面加載
-                page.wait_for_selector('.post-listing__list', timeout=30000)
+                await page.wait_for_selector('.post-listing__list', timeout=30000)
                 
                 # 找到第一個文章
                 first_card = page.locator('.post-listing__list .post-listing__box-card').first
                 link = first_card.locator('.post-listing__box-card__link a').first
-                aria_label = link.get_attribute('aria-label')
-                href = link.get_attribute('href')
+                aria_label = await link.get_attribute('aria-label')
+                href = await link.get_attribute('href')
                 
                 logger.info(f"找到文章: {aria_label}")
                 logger.info(f"鏈接: {href}")
@@ -672,18 +715,18 @@ class CitadelScraper:
                         logger.warning("[測試模式] 文章已抓取過，但繼續執行...")
                     else:
                         logger.info("✓ 文章已存在於 MongoDB 中，跳過")
-                        browser.close()
+                        await browser.close()
                         return
                 
                 # 訪問文章頁面
                 logger.info("訪問文章頁面...")
-                page.goto(href, timeout=60000)
-                time.sleep(2)
+                await page.goto(href, timeout=60000)
+                await page.wait_for_timeout(2000)  # 等待 2 秒
                 
                 # 抓取標題
                 try:
                     heading = page.locator('span.heading-inner').first
-                    title = heading.inner_text()
+                    title = await heading.inner_text()
                     logger.info(f"標題: {title}")
                 except:
                     title = aria_label
@@ -691,17 +734,17 @@ class CitadelScraper:
                 # 抓取日期
                 try:
                     date_element = page.locator('p.page-section__article-header__date').first
-                    date = date_element.inner_text()
+                    date = await date_element.inner_text()
                     logger.info(f"日期: {date}")
                 except:
                     date = ""
                 
                 # 按順序抓取內容（文字和圖片）
-                content_elements = self.scrape_content_with_order(page)
+                content_elements = await self.scrape_content_with_order(page)
                 
                 # ✅ 抓取完成，立即關閉瀏覽器
                 logger.debug("✓ 內容抓取完成，關閉瀏覽器")
-                browser.close()
+                await browser.close()
                 
                 if not content_elements:
                     logger.error("內容抓取失敗")
@@ -719,6 +762,10 @@ class CitadelScraper:
                     'aria_label': aria_label,
                     'title': title,
                     'date': date,
+                    'series': series_key,
+                    'series_name': series_name,
+                    'series_name_zh': series_name_zh,
+                    'series_emoji': series_emoji,
                     'content_elements': [
                         {'type': e.type, 'content': e.content, 'order': e.order}
                         for e in content_elements
@@ -738,7 +785,7 @@ class CitadelScraper:
                 logger.info("-" * 70 + "\n")
                 
                 logger.info("=" * 70)
-                logger.info("✓ 所有任務完成！")
+                logger.info(f"✓ {series_name} 抓取完成！")
                 logger.info("=" * 70)
                 
             except Exception as e:
@@ -747,13 +794,23 @@ class CitadelScraper:
                 # 如果瀏覽器還開著，關閉它
                 try:
                     if browser:
-                        browser.close()
+                        await browser.close()
                 except:
                     pass
-            
-            finally:
-                logger.debug("清理資源...")
-                self.mongo_client.close()
+    
+    async def scrape_all(self):
+        """抓取所有配置的系列 - Async 版本"""
+        logger.info("\n" + "=" * 70)
+        logger.info("開始執行爬蟲任務")
+        logger.info(f"系列數量: {len(self.series_list)}")
+        logger.info("=" * 70)
+        
+        for series_key in self.series_list:
+            await self.scrape_series(series_key)
+        
+        logger.debug("清理資源...")
+        self.mongo_client.close()
+        logger.info("\n✓ 所有系列抓取完成！")
 
 
 def main():
@@ -767,11 +824,21 @@ def main():
     parser = argparse.ArgumentParser(description='Citadel Securities 新聞爬蟲')
     parser.add_argument('--test', action='store_true', 
                        help='測試模式：強制重新抓取，不更新 MongoDB 記錄')
+    parser.add_argument('--series', nargs='+', 
+                       choices=['global-market-intelligence', 'macro-thoughts', 'all'],
+                       default=['all'],
+                       help='要抓取的系列（可多選）：global-market-intelligence, macro-thoughts, all')
     args = parser.parse_args()
     
+    # 處理系列選擇
+    if 'all' in args.series:
+        series_list = list(SERIES_CONFIG.keys())
+    else:
+        series_list = args.series
+    
     logger.info("=" * 70)
-    logger.info("  Citadel Securities Global Market Intelligence 爬蟲")
-    logger.info("  MongoDB + OpenAI 翻譯 + Gmail + GitHub 圖床")
+    logger.info("  Citadel Securities 新聞爬蟲")
+    logger.info("  Async Playwright + MongoDB + OpenAI + Gmail + GitHub")
     logger.info("=" * 70)
     logger.info(f"日誌文件: {log_file}")
     
@@ -781,8 +848,8 @@ def main():
         logger.warning("   - 不會更新 MongoDB 記錄\n")
     
     try:
-        scraper = CitadelScraper(test_mode=args.test)
-        scraper.scrape()
+        scraper = CitadelScraper(test_mode=args.test, series_list=series_list)
+        asyncio.run(scraper.scrape_all())
     except ValueError as e:
         logger.error(f"配置錯誤: {e}")
         logger.info("請檢查 .env 文件配置，參考 env_template.txt")
