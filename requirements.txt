@@ -1,0 +1,8 @@
+playwright==1.48.0
+pymongo==4.10.1
+python-dotenv==1.0.1
+openai==1.54.5
+PyGithub==2.1.1
+requests==2.31.0
+Pillow==10.1.0
+

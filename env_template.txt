@@ -1,0 +1,18 @@
+# MongoDB Configuration
+MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/database?retryWrites=true&w=majority
+
+# OpenAI Configuration
+OPENAI_API_KEY=sk-your-openai-api-key-here
+MODEL=gpt-4o-mini
+
+# Gmail Configuration
+MAIL_TOKEN=your-email@gmail.com
+APP_PASSWORD=your-gmail-app-password
+
+# Email Recipients (comma separated)
+RECIPIENTS=recipient1@example.com,recipient2@example.com
+
+# GitHub Configuration (for image storage)
+GITHUB_TOKEN=your-github-token
+GITHUB_REPO=chendoit/PicBed
+
