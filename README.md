@@ -1,9 +1,17 @@
 # Citadel Securities 新聞爬蟲
 
-使用 Python Playwright 抓取 Citadel Securities Global Market Intelligence 系列文章，並自動翻譯為繁體中文。
+使用 Python Async Playwright 抓取 Citadel Securities 多個系列文章，並自動翻譯為繁體中文。
+
+## 🌐 支援環境
+
+- ✅ **本地端**：Windows / macOS / Linux
+- ✅ **Kaggle Notebook**：完整支援（詳見 `kaggle_setup_guide.md`）
+- ✅ 自動檢測環境並使用對應的配置方式
 
 ## ✨ 功能特性
 
+- ✅ **多系列支持**: Global Market Intelligence、Macro Thoughts
+- ✅ **Async 異步**: 使用 Async Playwright 提升性能
 - ✅ **智能抓取**: 自動抓取最新文章
 - ✅ **MongoDB 儲存**: 使用 URL 作為唯一鍵，避免重複
 - ✅ **OpenAI 翻譯**: 段落對應，英文緊跟繁體中文翻譯
@@ -13,6 +21,7 @@
 - ✅ **Gmail 發送**: 自動發送精美的 HTML 格式郵件
 - ✅ **測試模式**: 可重複測試不影響資料庫
 - ✅ **詳細日誌**: 每天一個日誌文件
+- ✅ **環境適配**: 自動識別本地端或 Kaggle 環境
 
 ## 📦 安裝步驟
 
@@ -53,15 +62,70 @@ python test_config.py
 
 ## 🚀 使用方法
 
-### 方法一：批處理文件（推薦）
+### 🖥️ 本地端使用
+
+#### 方法一：抓取所有系列（推薦）
 
 ```bash
-# 正常模式
+python scraper.py
+# 或使用 batch 文件
 run_scraper.bat
+```
 
-# 測試模式
+#### 方法二：抓取指定系列
+
+```bash
+# 只抓取 Global Market Intelligence
+python scraper.py --series global-market-intelligence
+
+# 只抓取 Macro Thoughts
+python scraper.py --series macro-thoughts
+
+# 同時抓取多個系列
+python scraper.py --series global-market-intelligence macro-thoughts
+```
+
+#### 方法三：測試模式（不保存到 MongoDB）
+
+```bash
+python scraper.py --test --series global-market-intelligence
+# 或使用 batch 文件
 run_scraper_test.bat
 ```
+
+---
+
+### ☁️ Kaggle Notebook 使用
+
+詳細說明請參考 **`kaggle_setup_guide.md`**
+
+**快速開始：**
+
+```python
+# Cell 1: 安裝依賴
+!pip install playwright pymongo python-dotenv openai PyGithub requests Pillow -q
+!playwright install chromium
+!playwright install-deps chromium
+
+# Cell 2: 上傳 scraper.py 文件到 Kaggle
+
+# Cell 3: 運行爬蟲
+import asyncio
+import scraper
+
+# 創建爬蟲實例
+scraper_instance = scraper.CitadelScraper(
+    test_mode=False,
+    series_list=['global-market-intelligence', 'macro-thoughts']
+)
+
+# 執行
+await scraper_instance.scrape_all()
+```
+
+**注意**：在 Kaggle Settings → Secrets 中設置所有必需的密鑰（MONGODB_URL、OPENAI_API_KEY 等）
+
+---
 
 ### 方法二：命令行
 
@@ -70,7 +134,7 @@ run_scraper_test.bat
 .\venv\Scripts\activate
 
 # 運行爬蟲
-python scraper.py         # 正常模式
+python scraper.py         # 正常模式（所有系列）
 python scraper.py --test  # 測試模式
 ```
 

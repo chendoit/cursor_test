@@ -14,7 +14,6 @@ from datetime import datetime
 from playwright.async_api import async_playwright
 import time
 import argparse
-from dotenv import load_dotenv
 from pymongo import MongoClient
 from openai import OpenAI
 import smtplib
@@ -27,6 +26,60 @@ import requests
 from github import Github
 from io import BytesIO
 import base64
+
+
+# ===== Kaggle & Local 環境兼容 =====
+def get_secret(key: str) -> str:
+    """
+    取得環境變數或 Kaggle Secret。
+    在本地端使用 .env，在 Kaggle 使用 UserSecretsClient。
+    """
+    try:
+        # 嘗試在 Kaggle 環境載入
+        from kaggle_secrets import UserSecretsClient
+        user_secrets = UserSecretsClient()
+        secret = user_secrets.get_secret(key)
+        logger.debug(f"✓ 從 Kaggle Secrets 載入: {key}")
+        return secret
+    except Exception:
+        # 非 Kaggle 或未設定 kaggle_secrets
+        from dotenv import load_dotenv
+        load_dotenv()
+        value = os.getenv(key)
+        logger.debug(f"✓ 從 .env 載入: {key}")
+        return value
+
+
+def is_kaggle_environment():
+    """檢測是否在 Kaggle 環境"""
+    return os.path.exists('/kaggle/working')
+
+
+async def setup_playwright_in_kaggle():
+    """在 Kaggle 環境中設置 Playwright"""
+    if is_kaggle_environment():
+        logger.info("檢測到 Kaggle 環境，安裝 Playwright 瀏覽器...")
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['playwright', 'install', 'chromium'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logger.info("✓ Playwright Chromium 已安裝")
+            
+            # 安裝系統依賴
+            result = subprocess.run(
+                ['playwright', 'install-deps', 'chromium'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logger.info("✓ 系統依賴已安裝")
+        except Exception as e:
+            logger.warning(f"Playwright 安裝警告: {e}")
+# ===== 結束環境兼容區域 =====
 
 
 # 配置 logging
@@ -183,10 +236,15 @@ class ContentElement:
 
 class CitadelScraper:
     def __init__(self, test_mode=False, series_list=None):
-        # 加載環境變量
-        load_dotenv()
         logger.info("=" * 70)
         logger.info("初始化 Citadel Scraper")
+        
+        # 檢測環境
+        if is_kaggle_environment():
+            logger.info("🔍 運行環境: Kaggle Notebook")
+        else:
+            logger.info("🔍 運行環境: 本地端")
+        
         logger.info("=" * 70)
         
         self.test_mode = test_mode
@@ -199,10 +257,10 @@ class CitadelScraper:
         
         # MongoDB 配置
         logger.debug("配置 MongoDB 連接...")
-        self.mongodb_url = os.getenv('MONGODB_URL')
+        self.mongodb_url = get_secret('MONGODB_URL')
         if not self.mongodb_url:
-            logger.error("MONGODB_URL 未在 .env 文件中設置")
-            raise ValueError("MONGODB_URL 未在 .env 文件中設置")
+            logger.error("MONGODB_URL 未設置")
+            raise ValueError("MONGODB_URL 未設置")
         
         self.mongo_client = MongoClient(self.mongodb_url)
         self.db = self.mongo_client['citadel_scraper']
@@ -214,36 +272,37 @@ class CitadelScraper:
         
         # OpenAI 配置
         logger.debug("配置 OpenAI API...")
-        self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        self.model = os.getenv('MODEL', 'gpt-4o-mini')
+        self.openai_api_key = get_secret('OPENAI_API_KEY')
+        self.model = get_secret('MODEL') or 'gpt-4o-mini'
         if not self.openai_api_key:
-            logger.error("OPENAI_API_KEY 未在 .env 文件中設置")
-            raise ValueError("OPENAI_API_KEY 未在 .env 文件中設置")
+            logger.error("OPENAI_API_KEY 未設置")
+            raise ValueError("OPENAI_API_KEY 未設置")
         
         self.openai_client = OpenAI(api_key=self.openai_api_key)
         logger.info(f"✓ OpenAI 配置完成 (模型: {self.model})")
         
         # Gmail 配置
         logger.debug("配置 Gmail SMTP...")
-        self.mail_token = os.getenv('MAIL_TOKEN')
-        self.app_password = os.getenv('APP_PASSWORD')
-        self.recipients = os.getenv('RECIPIENTS', '').split(',')
+        self.mail_token = get_secret('MAIL_TOKEN')
+        self.app_password = get_secret('APP_PASSWORD')
+        recipients_str = get_secret('RECIPIENTS') or ''
+        self.recipients = [r.strip() for r in recipients_str.split(',') if r.strip()]
         
         if not self.mail_token or not self.app_password:
-            logger.error("MAIL_TOKEN 或 APP_PASSWORD 未在 .env 文件中設置")
-            raise ValueError("MAIL_TOKEN 或 APP_PASSWORD 未在 .env 文件中設置")
+            logger.error("MAIL_TOKEN 或 APP_PASSWORD 未設置")
+            raise ValueError("MAIL_TOKEN 或 APP_PASSWORD 未設置")
         
         logger.info(f"✓ Gmail 配置完成 (發件人: {self.mail_token})")
         logger.info(f"  收件人: {', '.join(self.recipients)}")
         
         # GitHub 配置
         logger.debug("配置 GitHub 圖片上傳...")
-        github_token = os.getenv('GITHUB_TOKEN')
-        github_repo = os.getenv('GITHUB_REPO', 'chendoit/PicBed')
+        github_token = get_secret('GITHUB_TOKEN')
+        github_repo = get_secret('GITHUB_REPO') or 'chendoit/PicBed'
         
         if not github_token:
-            logger.error("GITHUB_TOKEN 未在 .env 文件中設置")
-            raise ValueError("GITHUB_TOKEN 未在 .env 文件中設置")
+            logger.error("GITHUB_TOKEN 未設置")
+            raise ValueError("GITHUB_TOKEN 未設置")
         
         self.github_uploader = GitHubImageUploader(github_token, github_repo)
     
@@ -805,6 +864,9 @@ class CitadelScraper:
         logger.info(f"系列數量: {len(self.series_list)}")
         logger.info("=" * 70)
         
+        # 在 Kaggle 環境中設置 Playwright
+        await setup_playwright_in_kaggle()
+        
         for series_key in self.series_list:
             await self.scrape_series(series_key)
         
@@ -813,7 +875,8 @@ class CitadelScraper:
         logger.info("\n✓ 所有系列抓取完成！")
 
 
-def main():
+async def main_async():
+    """Async main function for both local and Kaggle environments"""
     # 設置 Windows 控制台編碼
     import sys
     if sys.platform == 'win32':
@@ -849,7 +912,7 @@ def main():
     
     try:
         scraper = CitadelScraper(test_mode=args.test, series_list=series_list)
-        asyncio.run(scraper.scrape_all())
+        await scraper.scrape_all()
     except ValueError as e:
         logger.error(f"配置錯誤: {e}")
         logger.info("請檢查 .env 文件配置，參考 env_template.txt")
@@ -862,6 +925,19 @@ def main():
     logger.info("  任務結束")
     logger.info("=" * 70)
     logger.info(f"詳細日誌已保存到: {log_file}")
+
+
+def main():
+    """Synchronous wrapper for command-line usage"""
+    try:
+        # 檢測是否在已有的 event loop 中（如 Kaggle）
+        loop = asyncio.get_running_loop()
+        logger.error("檢測到已運行的 event loop。")
+        logger.error("在 Kaggle/Jupyter 中，請直接使用: await main_async()")
+        return
+    except RuntimeError:
+        # 沒有運行中的 loop，正常執行
+        asyncio.run(main_async())
 
 
 if __name__ == "__main__":
