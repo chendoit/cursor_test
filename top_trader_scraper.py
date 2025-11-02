@@ -1036,6 +1036,7 @@ class TopTraderScraper:
         # 為不同講者分配顏色編號
         speaker_colors = {}
         color_index = 1
+        previous_speaker = None  # 追蹤上一個講者
 
         for para in episode_data['transcript_zh']:
             # 獲取講者並分配顏色
@@ -1050,14 +1051,22 @@ class TopTraderScraper:
             speaker_class = f"speaker-{speaker_class_num}"
 
             # 生成頭部（講者標籤 + 時間戳）
+            # ★ 只在講者改變時顯示講者標籤
             header_html = ""
             if speaker or timestamp:
                 header_parts = []
-                if speaker:
+                
+                # 只有當講者改變時才顯示講者標籤
+                if speaker and speaker != previous_speaker:
                     header_parts.append(f'<span class="speaker-name-badge {speaker_class}">{speaker}</span>')
+                    previous_speaker = speaker  # 更新上一個講者
+                
+                # 時間戳始終顯示（如果有）
                 if timestamp:
                     header_parts.append(f'<span class="timestamp">🕐 {timestamp}</span>')
-                header_html = f'<div class="speaker-header">{"".join(header_parts)}</div>'
+                
+                if header_parts:  # 只有當有內容時才創建 header
+                    header_html = f'<div class="speaker-header">{"".join(header_parts)}</div>'
 
             card_class = f"has-speaker-{speaker_class_num}" if speaker else ""
 
