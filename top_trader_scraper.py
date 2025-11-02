@@ -245,7 +245,7 @@ class GitHubImageUploader:
 
 
 class TopTraderScraper:
-    def __init__(self, test_mode=False):
+    def __init__(self, test_mode=False, enable_translation=True):
         logger.info("=" * 70)
         logger.info("初始化 Top Traders Unplugged Scraper")
         
@@ -258,9 +258,13 @@ class TopTraderScraper:
         logger.info("=" * 70)
         
         self.test_mode = test_mode
+        self.enable_translation = enable_translation  # 翻譯開關
         
         if test_mode:
             logger.warning("測試模式已啟用 - 不會保存到 MongoDB")
+        
+        if not enable_translation:
+            logger.warning("⚠️  翻譯功能已禁用 - 只會保存英文原文")
         
         # 顯示篩選配置
         series_names = ', '.join([f"{c['name']} ({c['name_zh']})" for c in SERIES_CONFIG.values()])
@@ -507,13 +511,29 @@ class TopTraderScraper:
             logger.info("上傳封面圖片到 GitHub...")
             github_img_url = self.github_uploader.upload_image(episode_info['img_src'])
             
-            # 翻譯 transcript
-            logger.info("翻譯 transcript...")
-            translated_paragraphs = self.translate_transcript(transcript_text, episode_info['title'])
-            
-            if not translated_paragraphs:
-                logger.error("翻譯失敗")
-                return
+            # 翻譯 transcript（根據設定決定是否翻譯）
+            if self.enable_translation:
+                logger.info("翻譯 transcript...")
+                translated_paragraphs = self.translate_transcript(transcript_text, episode_info['title'])
+                
+                if not translated_paragraphs:
+                    logger.error("翻譯失敗")
+                    return
+            else:
+                logger.info("⚠️  跳過翻譯 - 只保存英文原文")
+                # 不翻譯，創建只有英文的段落
+                paragraphs = transcript_text.split('\n')
+                paragraphs = [p.strip() for p in paragraphs if p.strip()]
+                
+                translated_paragraphs = []
+                for i, para in enumerate(paragraphs):
+                    translated_paragraphs.append({
+                        'index': i,
+                        'english': para,
+                        'chinese': '',  # 空的中文
+                        'timestamp': None,
+                        'speaker': None
+                    })
             
             # 準備集數數據
             episode_data = {
@@ -733,9 +753,13 @@ class TopTraderScraper:
             msg = MIMEMultipart('alternative')
             msg['From'] = self.mail_token
             msg['To'] = ', '.join(self.recipients)
-
-            # 添加不保存到"已發送"文件夾的標頭
+            
+            # 多種方法嘗試不保存備份
             msg['X-Gm-No-Archive'] = '1'  # Gmail 專用：不保存備份
+            msg['Disposition-Notification-To'] = ''  # 不要求送達通知
+            
+            # 注意：Gmail 的「已發送」保存行為可能受帳號設定影響
+            # 如果以上方法無效，請前往 Gmail 設定 → 一般設定 → 取消勾選「將副本保存在已發送郵件中」
 
             # 郵件主題
             series_emoji = episode_data.get('series_emoji', '🎙️')
@@ -812,6 +836,7 @@ class TopTraderScraper:
             margin: 0 auto;
             padding: 20px;
             background-color: #f5f5f5;
+            font-size: 16px;  /* 基础字体：16px（原14px） */
         }}
         .container {{
             background-color: white;
@@ -825,7 +850,7 @@ class TopTraderScraper:
             color: white;
             padding: 8px 16px;
             border-radius: 20px;
-            font-size: 0.9em;
+            font-size: 1em;  /* 16px */
             margin-bottom: 15px;
             font-weight: 600;
         }}
@@ -835,7 +860,7 @@ class TopTraderScraper:
             color: white;
             padding: 8px 16px;
             border-radius: 20px;
-            font-size: 0.9em;
+            font-size: 1em;  /* 16px */
             margin-bottom: 15px;
             margin-left: 10px;
             font-weight: 600;
@@ -845,6 +870,10 @@ class TopTraderScraper:
             border-bottom: 3px solid #667eea;
             padding-bottom: 15px;
             margin-bottom: 25px;
+            font-size: 2em;  /* 32px（原28px） */
+        }}
+        h2 {{
+            font-size: 1.5em;  /* 24px（原20px） */
         }}
         .cover-image {{
             text-align: center;
@@ -858,7 +887,7 @@ class TopTraderScraper:
         }}
         .meta {{
             color: #666;
-            font-size: 0.95em;
+            font-size: 1em;  /* 16px（原14px） */
             margin-bottom: 30px;
             padding: 15px;
             background-color: #f8f9fa;
@@ -885,7 +914,7 @@ class TopTraderScraper:
              padding: 6px 12px;
              border-radius: 20px;
              font-weight: 600;
-             font-size: 0.9em;
+             font-size: 1em;  /* 16px（原14px） */
              color: white;
              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
          }}
@@ -908,7 +937,7 @@ class TopTraderScraper:
              background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
          }}
          .timestamp {{
-             font-size: 0.75em;
+             font-size: 0.875em;  /* 14px（原12px） */
              color: #999;
              font-family: 'Courier New', monospace;
              padding: 4px 8px;
@@ -945,6 +974,7 @@ class TopTraderScraper:
             background-color: transparent;
             border-radius: 0;
             border-left: none;
+            font-size: 1.0625em;  /* 17px（原15px） */
          }}
          .english::before {{
              content: "🇬🇧 ";
@@ -957,6 +987,7 @@ class TopTraderScraper:
              padding: 15px;
              border-radius: 8px;
              line-height: 1.7;
+             font-size: 1.0625em;  /* 17px（原15px） */
          }}
          .chinese::before {{
              content: "🇹🇼 ";
@@ -971,7 +1002,7 @@ class TopTraderScraper:
             padding-top: 20px;
             border-top: 2px solid #e0e0e0;
             color: #999;
-            font-size: 0.9em;
+            font-size: 0.9em;  /* 14.4px（原12.6px） */
             text-align: center;
         }}
         a {{
@@ -1035,7 +1066,7 @@ class TopTraderScraper:
                 {header_html}
                 <div class="content-card {card_class}">
                     <div class="english">{para['english']}</div>
-                    <div class="chinese">{para['chinese']}</div>
+                    {'<div class="chinese">' + para['chinese'] + '</div>' if para.get('chinese') else ''}
                 </div>
             </div>
 """)
@@ -1082,7 +1113,11 @@ async def main_async():
     parser = argparse.ArgumentParser(description='Top Traders Unplugged 播客爬蟲')
     parser.add_argument('--test', action='store_true',
                        help='測試模式：強制重新抓取，不更新 MongoDB 記錄')
+    parser.add_argument('--no-translation', action='store_true',
+                       help='禁用翻譯功能：只保存英文原文，不呼叫 OpenAI API')
     args = parser.parse_args()
+    
+    enable_translation = not args.no_translation  # 默認啟用翻譯
 
     logger.info("=" * 70)
     logger.info("  Top Traders Unplugged 播客爬蟲")
@@ -1094,9 +1129,15 @@ async def main_async():
         logger.warning("\n[測試模式] 測試模式已啟用")
         logger.warning("   - 將重新抓取已抓取過的集數")
         logger.warning("   - 不會更新 MongoDB 記錄\n")
-
+    
+    if not enable_translation:
+        logger.warning("\n[翻譯已禁用] 翻譯功能已關閉")
+        logger.warning("   - 只會保存英文原文")
+        logger.warning("   - 不會呼叫 OpenAI API")
+        logger.warning("   - 郵件中不會顯示中文翻譯\n")
+    
     try:
-        scraper = TopTraderScraper(test_mode=args.test)
+        scraper = TopTraderScraper(test_mode=args.test, enable_translation=enable_translation)
         await scraper.scrape_all()
     except ValueError as e:
         logger.error(f"配置錯誤: {e}")
