@@ -548,95 +548,83 @@ class TopTraderScraper:
             logger.error(f"處理集數失敗: {e}")
             logger.debug(traceback.format_exc())
 
+    # ==============================================================================
+    # =====▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 核心修改區域 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼=====
+    # ==============================================================================
     def translate_transcript(self, transcript_text, title, batch_size=50):
-        """翻譯 transcript 為繁體中文（段落形式，分批翻譯）"""
-        logger.info("開始翻譯 transcript...")
+        """翻譯 transcript 為繁體中文（段落形式，分批翻譯）- (已修改，增加講者上下文追蹤)"""
+        logger.info("開始翻譯 transcript (使用上下文感知邏輯)...")
         logger.debug(f"文字長度: {len(transcript_text)} 字符")
-        
+
         try:
-            # 保持原始分段（按換行符分割）
-            # 先嘗試雙換行符（段落分隔符）
-            paragraphs = transcript_text.split('\n\n')
-            
-            # 如果沒有雙換行符，嘗試單換行符
-            if len(paragraphs) == 1:
-                paragraphs = transcript_text.split('\n')
-            
-            # 過濾空段落
+            # 保持原始分段
+            paragraphs = transcript_text.split('\n')
             paragraphs = [p.strip() for p in paragraphs if p.strip()]
-            
+
             logger.info(f"原始分段: {len(paragraphs)} 個段落")
-            
-            # 提取時間戳和講者信息的函數
-            def extract_metadata(text):
-                """從文本中提取時間戳和講者，並清理文本"""
+
+            # 用於提取時間戳的函數
+            def extract_timestamp(text):
                 import re
-                
-                timestamp = None
-                speaker = None
-                clean_text = text
-                
-                # 匹配 [HH:MM:SS] 或 [MM:SS] 或 [H:MM:SS] 格式的時間戳
                 timestamp_pattern = r'^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*'
                 timestamp_match = re.match(timestamp_pattern, text)
-                
                 if timestamp_match:
                     timestamp = timestamp_match.group(1)
-                    clean_text = text[timestamp_match.end():]
-                    
-                    # 提取講者名字（在時間戳後，冒號前，可能多次出現）
-                    # 匹配模式：Name 或 Name: 或 Name\n
-                    speaker_pattern = r'^([A-Z][a-zA-Z\s]+?)(?:[:：\s]\s*)'
-                    speaker_match = re.match(speaker_pattern, clean_text)
-                    
-                    if speaker_match:
-                        speaker = speaker_match.group(1).strip()
-                        # 移除講者名字和後面的冒號/空格
-                        clean_text = clean_text[speaker_match.end():].strip()
-                        
-                        # 如果講者名字後面還有重複的，再移除一次
-                        # 例如 "Nigol\nNigol\n內容..." -> "內容..."
-                        repeat_pattern = rf'^{re.escape(speaker)}(?:[:：\s]\s*)'
-                        clean_text = re.sub(repeat_pattern, '', clean_text, flags=re.IGNORECASE).strip()
-                
-                return timestamp, speaker, clean_text
-            
-            # 處理段落，提取元數據
+                    clean_text = text[timestamp_match.end():].strip()
+                    return timestamp, clean_text
+                return None, text
+
             processed_paragraphs = []
-            for i, para in enumerate(paragraphs):
-                timestamp, speaker, clean_text = extract_metadata(para)
-                processed_paragraphs.append({
-                    'original': para,
-                    'clean': clean_text,
-                    'timestamp': timestamp,
-                    'speaker': speaker
-                })
-                
-                # 調試：顯示前 3 個段落的處理結果
-                if i < 3:
-                    logger.debug(f"段落 {i+1}:")
-                    logger.debug(f"  原始: {para[:80]}...")
-                    logger.debug(f"  時間戳: {timestamp}")
-                    logger.debug(f"  講者: {speaker}")
-                    logger.debug(f"  清理後: {clean_text[:80]}...")
-            
+            current_speaker = None  # 狀態變數：追蹤當前講者
+
+            # 用於識別一行文字是否可能為講者名稱的正規表達式
+            # 條件：1-3個單詞，首字母大寫，不以標點符號結尾
+            speaker_name_pattern = re.compile(r'^[A-Z][a-zA-Z\s]+$')
+
+            for para in paragraphs:
+                timestamp, clean_text = extract_timestamp(para)
+
+                # 判斷此行是否為講者名稱
+                # 條件: 1. 符合正規表達式 2. 單詞數較少 (<= 3) 3. 不是一句完整的長句
+                if speaker_name_pattern.match(clean_text) and len(clean_text.split()) <= 3:
+                    # 檢查是否為常見的非講者短語，避免誤判
+                    if clean_text.lower() not in ['outro', 'intro', 'introduction', 'conclusion']:
+                        current_speaker = clean_text  # 更新當前講者
+                        logger.debug(f"✓ 識別到新講者: {current_speaker}")
+                        continue # 這是講者標籤，不是對話內容，跳過此行
+
+                # 如果不是講者標籤，則視為對話內容
+                # 將其與當前的講者關聯起來
+                if clean_text:
+                    processed_paragraphs.append({
+                        'original': para,
+                        'clean': clean_text,
+                        'timestamp': timestamp,
+                        'speaker': current_speaker  # ★ 關鍵：關聯當前講者
+                    })
+
+            logger.info(f"處理後，共有 {len(processed_paragraphs)} 段有效對話需要翻譯")
+
+            if not processed_paragraphs:
+                logger.warning("沒有找到可翻譯的對話內容。")
+                return []
+
             # 分批翻譯（只翻譯清理後的文本）
             all_chinese_paragraphs = []
-            total_batches = (len(processed_paragraphs) + batch_size - 1) // batch_size  # 向上取整
-            
+            total_batches = (len(processed_paragraphs) + batch_size - 1) // batch_size
+
             logger.info(f"將分成 {total_batches} 批進行翻譯 (每批 {batch_size} 段)")
-            
+
             for batch_num in range(total_batches):
                 start_idx = batch_num * batch_size
                 end_idx = min((batch_num + 1) * batch_size, len(processed_paragraphs))
                 batch_items = processed_paragraphs[start_idx:end_idx]
                 batch_texts = [item['clean'] for item in batch_items]
-                
+
                 logger.info(f"\n--- 翻譯批次 {batch_num + 1}/{total_batches} (段落 {start_idx + 1}-{end_idx}) ---")
-                
-                # 準備 JSON
+
                 paragraphs_json = json.dumps(batch_texts, ensure_ascii=False, indent=2)
-                
+
                 prompt = f"""請將以下 JSON 數組中的英文段落翻譯成繁體中文。
 
 要求：
@@ -654,7 +642,7 @@ class TopTraderScraper:
 
 請返回對應的繁體中文翻譯數組（格式示例: ["段落1翻譯", "段落2翻譯", ...]）：
 """
-                
+
                 logger.debug(f"調用 OpenAI API (批次 {batch_num + 1})...")
                 response = self.openai_client.chat.completions.create(
                     model=self.model,
@@ -664,39 +652,31 @@ class TopTraderScraper:
                     ],
                     temperature=0.3
                 )
-                
+
                 response_text = response.choices[0].message.content.strip()
                 logger.debug(f"API 響應長度: {len(response_text)}")
-                
-                # 解析 JSON
+
                 chinese_paragraphs = json.loads(response_text)
-                
-                # 如果返回的是對象，嘗試提取數組
+
                 if isinstance(chinese_paragraphs, dict):
-                    possible_keys = [
-                        'translations', 'paragraphs', 'chinese', 'result', 'data',
-                        '翻譯結果', '翻译结果', '翻譯', '中文', '段落', '結果'
-                    ]
+                    possible_keys = ['translations', 'paragraphs', 'chinese', 'result', 'data', '翻譯結果', '翻译结果', '翻譯', '中文', '段落', '結果']
                     for key in possible_keys:
                         if key in chinese_paragraphs:
                             chinese_paragraphs = chinese_paragraphs[key]
                             logger.debug(f"從鍵 '{key}' 提取數組")
                             break
-                
-                # 確保是列表
+
                 if not isinstance(chinese_paragraphs, list):
                     logger.error(f"返回類型錯誤: {type(chinese_paragraphs)}")
                     return None
-                
-                # 檢查數量是否匹配
+
                 if len(chinese_paragraphs) != len(batch_texts):
                     logger.warning(f"翻譯數量不匹配: 預期 {len(batch_texts)}，實際 {len(chinese_paragraphs)}")
-                
+
                 all_chinese_paragraphs.extend(chinese_paragraphs)
-                
+
                 logger.info(f"✓ 批次 {batch_num + 1} 翻譯完成 (Token: {response.usage.total_tokens})")
-            
-            # 組合成一個完整的翻譯，包含元數據
+
             combined_translations = []
             for i, (item, zh) in enumerate(zip(processed_paragraphs, all_chinese_paragraphs)):
                 combined_translations.append({
@@ -706,82 +686,85 @@ class TopTraderScraper:
                     'timestamp': item['timestamp'],
                     'speaker': item['speaker']
                 })
-            
+
             logger.info(f"✓ 所有翻譯完成，共 {len(combined_translations)} 個段落")
-            
+
             return combined_translations
-            
+
         except Exception as e:
             logger.error(f"翻譯失敗: {e}")
             logger.debug(traceback.format_exc())
             return None
-    
+    # ==============================================================================
+    # =====▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 核心修改區域 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲=====
+    # ==============================================================================
+
     def save_to_mongodb(self, episode_data):
         """保存集數到 MongoDB"""
         try:
             if self.test_mode:
                 logger.warning("[測試模式] 跳過保存到 MongoDB")
                 return True
-            
+
             logger.debug(f"保存集數到 MongoDB: {episode_data['url']}")
             result = self.episodes_collection.update_one(
                 {'url': episode_data['url']},
                 {'$set': episode_data},
                 upsert=True
             )
-            
+
             if result.upserted_id:
                 logger.info(f"✓ 新集數已保存到 MongoDB (ID: {result.upserted_id})")
             else:
                 logger.info(f"✓ 集數已更新到 MongoDB")
-            
+
             return True
         except Exception as e:
             logger.error(f"保存到 MongoDB 失敗: {e}")
             logger.debug(traceback.format_exc())
             return False
-    
+
     def send_email(self, episode_data):
         """發送郵件（不保留備份）"""
         logger.info("準備發送郵件...")
-        
+
         try:
             # 創建郵件
             msg = MIMEMultipart('alternative')
             msg['From'] = self.mail_token
             msg['To'] = ', '.join(self.recipients)
-            
+
             # 添加不保存到"已發送"文件夾的標頭
             msg['X-Gm-No-Archive'] = '1'  # Gmail 專用：不保存備份
-            
+
             # 郵件主題
             series_emoji = episode_data.get('series_emoji', '🎙️')
             series_name_zh = episode_data.get('series_name_zh', '')
             subject_parts = [f"{series_emoji} Top Traders Unplugged"]
-            
+
             if series_name_zh:
                 subject_parts.append(f"- {series_name_zh}")
-            
+
             if episode_data.get('featured_speaker'):
                 subject_parts.append(f"- {episode_data['featured_speaker']}")
-            
+
             subject_parts.append(f"- {episode_data['title']}")
-            
+
             msg['Subject'] = ' '.join(subject_parts)
-            
+
             # 生成 HTML 內容
             html_content = self._generate_html_email(episode_data)
-            
+
             # 添加 HTML 部分
             part = MIMEText(html_content, 'html', 'utf-8')
             msg.attach(part)
-            
+
             # 發送郵件
             logger.debug("連接到 Gmail SMTP 服務器...")
             logger.debug(f"  使用帳號: {self.mail_token}")
             logger.debug(f"  密碼長度: {len(self.app_password)}")
             logger.info("  已設定不保存郵件備份到「已發送」文件夾")
-            
+
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 logger.debug("  SMTP 連接已建立")
                 server.set_debuglevel(0)  # 設為 1 可看到更多調試信息
@@ -789,10 +772,10 @@ class TopTraderScraper:
                 logger.debug("  登入成功")
                 server.send_message(msg)
                 logger.debug("  郵件已發送")
-            
+
             logger.info(f"✓ 郵件已發送")
             return True
-            
+
         except smtplib.SMTPAuthenticationError as e:
             logger.error(f"Gmail 認證失敗: {e}")
             logger.error("請檢查:")
@@ -805,16 +788,16 @@ class TopTraderScraper:
             logger.error(f"發送郵件失敗: {e}")
             logger.debug(traceback.format_exc())
             return False
-    
+
     def _generate_html_email(self, episode_data):
         """生成 HTML 郵件內容"""
         html_parts = []
-        
+
         series_emoji = episode_data.get('series_emoji', '🎙️')
         series_name = episode_data.get('series_name', 'Podcast')
         series_name_zh = episode_data.get('series_name_zh', '播客')
         featured_speaker = episode_data.get('featured_speaker', '')
-        
+
         html_parts.append(f"""
 <!DOCTYPE html>
 <html>
@@ -896,7 +879,7 @@ class TopTraderScraper:
              gap: 10px;
              margin-bottom: 12px;
          }}
-         .speaker-badge {{
+         .speaker-name-badge {{ /* Renamed for clarity */
              display: inline-flex;
              align-items: center;
              padding: 6px 12px;
@@ -906,22 +889,22 @@ class TopTraderScraper:
              color: white;
              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
          }}
-         .speaker-badge.speaker-1 {{
+         .speaker-name-badge.speaker-1 {{
              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
          }}
-         .speaker-badge.speaker-2 {{
+         .speaker-name-badge.speaker-2 {{
              background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
          }}
-         .speaker-badge.speaker-3 {{
+         .speaker-name-badge.speaker-3 {{
              background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
          }}
-         .speaker-badge.speaker-4 {{
+         .speaker-name-badge.speaker-4 {{
              background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
          }}
-         .speaker-badge.speaker-5 {{
+         .speaker-name-badge.speaker-5 {{
              background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
          }}
-         .speaker-badge.speaker-default {{
+         .speaker-name-badge.speaker-default {{
              background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
          }}
          .timestamp {{
@@ -1018,35 +1001,35 @@ class TopTraderScraper:
         <div class="transcript-section">
             <h2>📝 Transcript / 文字稿</h2>
 """)
-        
-        # 添加段落（英文 + 繁體中文交替顯示，講者有顏色標記）
+
         # 為不同講者分配顏色編號
         speaker_colors = {}
         color_index = 1
-        
+
         for para in episode_data['transcript_zh']:
             # 獲取講者並分配顏色
             speaker = para.get('speaker', '')
             timestamp = para.get('timestamp', '')
-            
+
             if speaker and speaker not in speaker_colors:
                 speaker_colors[speaker] = color_index
                 color_index = (color_index % 5) + 1  # 循環使用 1-5
-            
-            speaker_class = f"speaker-{speaker_colors.get(speaker, 'default')}"
-            
+
+            speaker_class_num = speaker_colors.get(speaker, 'default')
+            speaker_class = f"speaker-{speaker_class_num}"
+
             # 生成頭部（講者標籤 + 時間戳）
             header_html = ""
             if speaker or timestamp:
                 header_parts = []
                 if speaker:
-                    header_parts.append(f'<span class="speaker-badge {speaker_class}">{speaker}</span>')
+                    header_parts.append(f'<span class="speaker-name-badge {speaker_class}">{speaker}</span>')
                 if timestamp:
                     header_parts.append(f'<span class="timestamp">🕐 {timestamp}</span>')
                 header_html = f'<div class="speaker-header">{"".join(header_parts)}</div>'
-            
-            card_class = f"has-{speaker_class}" if speaker else ""
-            
+
+            card_class = f"has-speaker-{speaker_class_num}" if speaker else ""
+
             html_parts.append(f"""
             <div class="paragraph-block">
                 {header_html}
@@ -1056,7 +1039,7 @@ class TopTraderScraper:
                 </div>
             </div>
 """)
-        
+
         html_parts.append("""
         </div>
         
@@ -1068,20 +1051,20 @@ class TopTraderScraper:
 </body>
 </html>
 """)
-        
+
         return ''.join(html_parts)
-    
+
     async def scrape_all(self):
         """執行爬蟲任務 - Async 版本"""
         logger.info("\n" + "=" * 70)
         logger.info("開始執行爬蟲任務")
         logger.info("=" * 70)
-        
+
         # 在 Kaggle 環境中設置 Playwright
         await setup_playwright_in_kaggle()
-        
+
         await self.scrape_latest_episodes()
-        
+
         logger.debug("清理資源...")
         self.mongo_client.close()
         logger.info("\n✓ 所有任務完成！")
@@ -1095,23 +1078,23 @@ async def main_async():
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-    
+
     parser = argparse.ArgumentParser(description='Top Traders Unplugged 播客爬蟲')
-    parser.add_argument('--test', action='store_true', 
+    parser.add_argument('--test', action='store_true',
                        help='測試模式：強制重新抓取，不更新 MongoDB 記錄')
     args = parser.parse_args()
-    
+
     logger.info("=" * 70)
     logger.info("  Top Traders Unplugged 播客爬蟲")
     logger.info("  Async Playwright + MongoDB + OpenAI + Gmail + GitHub")
     logger.info("=" * 70)
     logger.info(f"日誌文件: {log_file}")
-    
+
     if args.test:
         logger.warning("\n[測試模式] 測試模式已啟用")
         logger.warning("   - 將重新抓取已抓取過的集數")
         logger.warning("   - 不會更新 MongoDB 記錄\n")
-    
+
     try:
         scraper = TopTraderScraper(test_mode=args.test)
         await scraper.scrape_all()
@@ -1122,7 +1105,7 @@ async def main_async():
     except Exception as e:
         logger.error(f"程序錯誤: {e}")
         logger.debug(traceback.format_exc())
-    
+
     logger.info("\n" + "=" * 70)
     logger.info("  任務結束")
     logger.info("=" * 70)
@@ -1144,4 +1127,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
