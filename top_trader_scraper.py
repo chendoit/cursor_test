@@ -130,18 +130,18 @@ SERIES_CONFIG = {
         'emoji': '🌍',
         'prefix': 'gm_'
     },
-    # 'ugo': {
-    #     'name': 'U Got Options',
-    #     'name_zh': '期權解析',
-    #     'emoji': '📈',
-    #     'prefix': 'ugo_'
-    # }
+    'ugo': {
+        'name': 'U Got Options',
+        'name_zh': '期權解析',
+        'emoji': '📈',
+        'prefix': 'ugo_'
+    }
 }
 
 # 關注的講者（支持全名或姓氏匹配）
 FEATURED_SPEAKERS = {
     # 'Cem Karsan': ['cem karsan', 'karsan', 'cem'],  # 匹配全名、姓氏或名字
-    # 'Cem Karsan': ['cem karsan'],  # 匹配全名、姓氏或名字
+    'Cem Karsan': ['cem karsan'],  # 匹配全名、姓氏或名字
     'Alan Dunne': ['alan dunne'],
     # 可以在這裡添加更多講者
 }
