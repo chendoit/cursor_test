@@ -654,6 +654,77 @@ class HyReadScraper:
             print(f"         ⚠️  提取章節名稱失敗: {e}")
             return ""
     
+    async def is_toc_page(self, iframe: FrameLocator) -> bool:
+        """
+        判斷是否為目錄頁
+        
+        Args:
+            iframe: iframe locator
+            
+        Returns:
+            是否為目錄頁
+        """
+        try:
+            body = iframe.locator('body')
+            
+            # 檢查是否有 nav[epub:type="toc"]
+            toc_nav = body.locator('nav[epub\\:type="toc"]')
+            if await toc_nav.count() > 0:
+                return True
+            
+            # 或者檢查 h1 是否包含「目錄」
+            h1_elements = body.locator('h1')
+            if await h1_elements.count() > 0:
+                h1_text = await h1_elements.first.text_content()
+                if h1_text and '目錄' in h1_text:
+                    return True
+            
+            return False
+        except:
+            return False
+    
+    async def extract_toc_links(self, iframe: FrameLocator) -> list:
+        """
+        從目錄頁提取所有章節鏈接
+        
+        Args:
+            iframe: iframe locator
+            
+        Returns:
+            章節鏈接列表 [{'title': '章節標題', 'href': '鏈接'}]
+        """
+        try:
+            toc_items = []
+            body = iframe.locator('body')
+            
+            # 找到所有目錄中的鏈接
+            links = body.locator('nav[epub\\:type="toc"] a, ol a, ul a')
+            link_count = await links.count()
+            
+            for i in range(link_count):
+                link = links.nth(i)
+                title = await link.text_content()
+                href = await link.get_attribute('href')
+                
+                if title and href:
+                    # 提取文件名（用於匹配）
+                    import re
+                    match = re.search(r'([^/]+)\.xhtml', href)
+                    if match:
+                        file_name = match.group(1)
+                        toc_items.append({
+                            'title': title.strip(),
+                            'href': href,
+                            'file_name': file_name
+                        })
+            
+            print(f"         📑 提取到 {len(toc_items)} 個目錄項")
+            return toc_items
+            
+        except Exception as e:
+            print(f"         ⚠️  提取目錄鏈接失敗: {e}")
+            return []
+    
     async def scrape_chapter_from_iframe(self, iframe: FrameLocator, base_url: str = None) -> Dict[str, any]:
         """
         從單個 iframe 抓取完整章節內容（保持元素順序）
@@ -666,12 +737,22 @@ class HyReadScraper:
             章節資料字典，包含章節名和有序內容列表
         """
         try:
+            # 檢查是否為目錄頁
+            is_toc = await self.is_toc_page(iframe)
+            
             # 提取章節名稱
             chapter_name = await self.extract_chapter_name(iframe)
             
             if not chapter_name:
                 # 如果沒有章節名，使用特殊標記（可能是封面或前言）
                 chapter_name = "__no_chapter__"
+            
+            # 如果是目錄頁，提取目錄鏈接
+            toc_links = []
+            if is_toc or '目錄' in chapter_name:
+                toc_links = await self.extract_toc_links(iframe)
+                if toc_links:
+                    chapter_name = "目錄"  # 統一命名為「目錄」
             
             # 按順序抓取所有內容元素（保持 DOM 順序）
             content_items = []
@@ -777,7 +858,9 @@ class HyReadScraper:
                 'content_items': content_items,
                 'images': images,
                 'figure_images': figure_images,  # figure 中的圖片
-                'footnotes': footnotes
+                'footnotes': footnotes,
+                'is_toc': is_toc or '目錄' in chapter_name,  # 是否為目錄頁
+                'toc_links': toc_links  # 目錄鏈接列表
             }
             
         except Exception as e:
@@ -1096,17 +1179,66 @@ class HyReadScraper:
             local_path = await self.download_image(url, page_number, base_url)
             image['local_path'] = local_path
     
-    async def convert_chapter_to_markdown(self, chapter_data: Dict[str, any]) -> str:
+    def _generate_anchor_id(self, chapter_name: str) -> str:
+        """
+        從章節名稱生成 Markdown 錨點 ID
+        
+        Args:
+            chapter_name: 章節名稱
+            
+        Returns:
+            錨點 ID
+        """
+        import re
+        # 移除特殊字符，保留中英文數字
+        anchor = re.sub(r'[^\w\s\-]', '', chapter_name)
+        # 替換空格為連字符
+        anchor = re.sub(r'\s+', '-', anchor)
+        return anchor.lower()
+    
+    async def convert_chapter_to_markdown(self, chapter_data: Dict[str, any], chapter_map: dict = None, toc_anchor: str = None, is_toc_chapter: bool = False) -> str:
         """
         將章節資料轉換為 Markdown 格式
         
         Args:
             chapter_data: 章節資料字典
+            chapter_map: 章節名稱到錨點 ID 的映射字典（用於目錄交叉引用）
+            toc_anchor: 目錄的錨點 ID（用於"回到目錄"鏈接）
+            is_toc_chapter: 是否為目錄章節
             
         Returns:
             Markdown 格式的文字
         """
         markdown_lines = []
+        
+        # 如果是目錄頁，特殊處理
+        if chapter_data.get('is_toc') and chapter_data.get('toc_links'):
+            markdown_lines.append("\n## 目錄\n\n")
+            
+            for toc_item in chapter_data['toc_links']:
+                title = toc_item['title']
+                
+                # 查找對應的章節錨點
+                if chapter_map:
+                    # 嘗試在章節映射中找到匹配的章節
+                    anchor = None
+                    for ch_name, ch_anchor in chapter_map.items():
+                        # 簡單的標題匹配
+                        if title in ch_name or ch_name in title:
+                            anchor = ch_anchor
+                            break
+                    
+                    if anchor:
+                        # 生成內部鏈接
+                        markdown_lines.append(f"- [{title}](#{anchor})\n")
+                    else:
+                        # 沒有找到對應章節，只顯示文本
+                        markdown_lines.append(f"- {title}\n")
+                else:
+                    markdown_lines.append(f"- {title}\n")
+            
+            markdown_lines.append("\n")
+            return ''.join(markdown_lines)
         
         # 處理有序內容（包含 figure）
         for item in chapter_data['content_items']:
@@ -1156,6 +1288,11 @@ class HyReadScraper:
             markdown_lines.append("\n---\n\n**註釋：**\n\n")
             for footnote in chapter_data['footnotes']:
                 markdown_lines.append(f"{footnote}\n\n")
+        
+        # 在章節末尾添加"回到目錄"鏈接（除了目錄頁本身）
+        if not is_toc_chapter and toc_anchor:
+            markdown_lines.append("\n---\n\n")
+            markdown_lines.append(f"[📚 回到目錄](#{toc_anchor})\n")
         
         return ''.join(markdown_lines)
     
@@ -1329,7 +1466,7 @@ class HyReadScraper:
         await self.click_accept_button(reading_page)
 
         # 等待頁面完全載入
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
 
         # 儲存章節，key = 章節名，value = 章節資料
         chapters = {}
@@ -1481,6 +1618,19 @@ class HyReadScraper:
         print("📖 章節排序結果：")
         print("=" * 60)
 
+        # 建立章節名稱到錨點 ID 的映射
+        chapter_map = {}
+        toc_anchor = None  # 目錄的錨點 ID
+        
+        for chapter_name in sorted_chapter_order:
+            if chapter_name == "目錄":
+                # 為目錄設置固定錨點
+                toc_anchor = "toc"
+                chapter_map[chapter_name] = toc_anchor
+            elif chapter_name != "__no_chapter__":
+                anchor_id = self._generate_anchor_id(chapter_name)
+                chapter_map[chapter_name] = anchor_id
+        
         # 按照排序後的順序轉換章節為 Markdown
         all_markdown = []
         
@@ -1490,12 +1640,28 @@ class HyReadScraper:
             display_name = chapter_name if chapter_name != "__no_chapter__" else "前言/封面"
             print(f"📝 第 {idx} 章: {display_name}")
             
-            chapter_markdown = await self.convert_chapter_to_markdown(chapter_data)
-            all_markdown.append(chapter_markdown)
+            # 為非目錄章節添加錨點
+            chapter_markdown_parts = []
+            
+            if chapter_name in chapter_map:
+                # 添加錨點
+                anchor_id = chapter_map[chapter_name]
+                chapter_markdown_parts.append(f'<a name="{anchor_id}"></a>\n\n')
+            
+            # 轉換章節內容（傳入 chapter_map 和 toc_anchor 用於交叉引用）
+            chapter_content = await self.convert_chapter_to_markdown(
+                chapter_data, 
+                chapter_map, 
+                toc_anchor=toc_anchor,
+                is_toc_chapter=(chapter_name == "目錄")
+            )
+            chapter_markdown_parts.append(chapter_content)
+            
+            all_markdown.append(''.join(chapter_markdown_parts))
         
         return '\n\n'.join(all_markdown)
     
-    async def run(self, headless: bool = False, slow_mo: int = 100, wait_time: int = 30) -> bool:
+    async def run(self, headless: bool = False, slow_mo: int = 100, wait_time: int = 10) -> bool:
         """
         執行完整的借閱流程（包含爬蟲）
         
@@ -1557,9 +1723,9 @@ class HyReadScraper:
                     header = f"# {self.book_title if self.book_title else '書籍內容'}\n\n"
                     if self.book_title:
                         header += f"- 書名: {self.book_title}\n"
-                    header += f"- 書籍 ID: {self.book_id}\n"
-                    header += f"- 爬取時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    header += "---\n\n"
+                    # header += f"- 書籍 ID: {self.book_id}\n"
+                    # header += f"- 爬取時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    # header += "---\n\n"
                     
                     with open(output_file, 'w', encoding='utf-8') as f:
                         f.write(header + markdown_content)
@@ -1617,7 +1783,7 @@ async def main():
         success = await scraper.run(
             headless=False, 
             slow_mo=100,
-            wait_time=30
+            wait_time=10
         )
         
         if success:
