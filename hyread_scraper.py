@@ -619,40 +619,112 @@ class HyReadScraper:
             print(f"         ⚠️  提取 figure 內容失敗: {e}")
             return None
     
-    async def extract_chapter_name(self, iframe: FrameLocator) -> str:
+    async def extract_chapter_name(self, iframe: FrameLocator) -> tuple:
         """
-        從 iframe 中提取章節名稱
+        從 iframe 中提取章節名稱和排序號
         
         Args:
             iframe: iframe locator
             
         Returns:
-            章節名稱（如果沒有則返回空字串）
+            (章節名稱, 排序號) 的元組，如果沒有排序號則返回 None
         """
         try:
-            # 找到 h1 標籤
-            h1_elements = iframe.locator('h1')
+            body = iframe.locator('body')
+            
+            # 規則 1: 檢查 h2 的 sigil_toc_id
+            h2_elements = body.locator('h2[id^="sigil_toc_id_"]')
+            h2_count = await h2_elements.count()
+            
+            if h2_count > 0:
+                # 使用第一個 h2
+                h2 = h2_elements.first
+                h2_id = await h2.get_attribute('id')
+                h2_text = await self.extract_html_with_formatting(h2)
+                
+                # 從 id 中提取數字
+                import re
+                match = re.search(r'sigil_toc_id_(\d+)', h2_id)
+                if match:
+                    order_num = int(match.group(1))
+                    return (h2_text.strip(), order_num)
+                
+                return (h2_text.strip(), None)
+            
+            # 規則 2: 檢查 h1 中的 span.num2 (Chapter X)
+            h1_elements = body.locator('h1')
             h1_count = await h1_elements.count()
             
             for i in range(h1_count):
                 h1 = h1_elements.nth(i)
-                # 在 h1 中找 span.num2
                 span_num2 = h1.locator('span.num2')
+                
                 if await span_num2.count() > 0:
                     # 獲取整個 h1 的文字作為章節名
                     chapter_name = await self.extract_html_with_formatting(h1)
-                    return chapter_name.strip()
+                    
+                    # 嘗試從 span.num2 中提取章節號
+                    span_text = await span_num2.text_content()
+                    import re
+                    match = re.search(r'Chapter\s+(\d+)', span_text, re.IGNORECASE)
+                    if match:
+                        order_num = int(match.group(1))
+                        return (chapter_name.strip(), order_num)
+                    
+                    return (chapter_name.strip(), None)
             
-            # 如果沒有找到，嘗試只找第一個 h1
+            # 規則 3: 檢查 h2 中的 span.num (第X章)
+            h2_num_elements = body.locator('h2')
+            h2_num_count = await h2_num_elements.count()
+            
+            for i in range(h2_num_count):
+                h2 = h2_num_elements.nth(i)
+                span_num = h2.locator('span.num')
+                
+                if await span_num.count() > 0:
+                    # 獲取整個 h2 的文字作為章節名
+                    chapter_name = await self.extract_html_with_formatting(h2)
+                    
+                    # 嘗試從 span.num 中提取章節號
+                    span_text = await span_num.text_content()
+                    
+                    # 處理中文數字
+                    chinese_nums = {
+                        '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+                        '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+                        '十一': 11, '十二': 12, '十三': 13, '十四': 14, '十五': 15,
+                        '十六': 16, '十七': 17, '十八': 18, '十九': 19, '二十': 20
+                    }
+                    
+                    import re
+                    # 嘗試匹配「第X章」
+                    match = re.search(r'第([一二三四五六七八九十百\d]+)章', span_text)
+                    if match:
+                        num_str = match.group(1)
+                        if num_str in chinese_nums:
+                            order_num = chinese_nums[num_str]
+                            return (chapter_name.strip(), order_num)
+                        elif num_str.isdigit():
+                            order_num = int(num_str)
+                            return (chapter_name.strip(), order_num)
+                    
+                    return (chapter_name.strip(), None)
+            
+            # 如果沒有找到特殊標記，嘗試只找第一個 h1 或 h2
             if h1_count > 0:
                 first_h1 = await self.extract_html_with_formatting(h1_elements.first)
-                return first_h1.strip()
+                return (first_h1.strip(), None)
             
-            return ""
+            h2_all = body.locator('h2')
+            if await h2_all.count() > 0:
+                first_h2 = await self.extract_html_with_formatting(h2_all.first)
+                return (first_h2.strip(), None)
+            
+            return ("", None)
             
         except Exception as e:
             print(f"         ⚠️  提取章節名稱失敗: {e}")
-            return ""
+            return ("", None)
     
     async def is_toc_page(self, iframe: FrameLocator) -> bool:
         """
@@ -740,12 +812,13 @@ class HyReadScraper:
             # 檢查是否為目錄頁
             is_toc = await self.is_toc_page(iframe)
             
-            # 提取章節名稱
-            chapter_name = await self.extract_chapter_name(iframe)
+            # 提取章節名稱和排序號
+            chapter_name, order_num = await self.extract_chapter_name(iframe)
             
             if not chapter_name:
                 # 如果沒有章節名，使用特殊標記（可能是封面或前言）
                 chapter_name = "__no_chapter__"
+                order_num = None
             
             # 如果是目錄頁，提取目錄鏈接
             toc_links = []
@@ -753,6 +826,7 @@ class HyReadScraper:
                 toc_links = await self.extract_toc_links(iframe)
                 if toc_links:
                     chapter_name = "目錄"  # 統一命名為「目錄」
+                    order_num = None  # 目錄不參與排序
             
             # 按順序抓取所有內容元素（保持 DOM 順序）
             content_items = []
@@ -855,6 +929,7 @@ class HyReadScraper:
             
             return {
                 'name': chapter_name,
+                'order_num': order_num,  # 章節排序號
                 'content_items': content_items,
                 'images': images,
                 'figure_images': figure_images,  # figure 中的圖片
@@ -1034,12 +1109,13 @@ class HyReadScraper:
             # 下載失敗時返回原 URL
             return url
     
-    def extract_chapter_number(self, chapter_name: str) -> tuple:
+    def extract_chapter_number(self, chapter_name: str, order_num: int = None) -> tuple:
         """
         從章節名稱中提取章節編號
         
         Args:
             chapter_name: 章節名稱
+            order_num: 已提取的排序號（優先使用）
             
         Returns:
             (章節類型, 章節編號) 
@@ -1047,6 +1123,10 @@ class HyReadScraper:
             - 章節編號: 數字或 None
         """
         import re
+        
+        # 如果已經有排序號，直接使用
+        if order_num is not None:
+            return ('main', order_num)
         
         # 前置內容的關鍵字及其優先順序
         front_keywords = {
@@ -1126,12 +1206,13 @@ class HyReadScraper:
         # 如果無法識別，視為前置內容，放在最後
         return ('front', 999)
     
-    def sort_chapters(self, chapter_order: list) -> list:
+    def sort_chapters(self, chapter_order: list, chapters: dict) -> list:
         """
         對章節進行智能排序
         
         Args:
             chapter_order: 原始章節順序列表
+            chapters: 章節資料字典
             
         Returns:
             排序後的章節列表
@@ -1139,7 +1220,11 @@ class HyReadScraper:
         # 為每個章節提取排序資訊
         chapter_info = []
         for chapter_name in chapter_order:
-            chapter_type, chapter_num = self.extract_chapter_number(chapter_name)
+            # 從 chapters 字典中獲取章節的 order_num
+            chapter_data = chapters.get(chapter_name, {})
+            order_num = chapter_data.get('order_num')
+            
+            chapter_type, chapter_num = self.extract_chapter_number(chapter_name, order_num)
             chapter_info.append((chapter_name, chapter_type, chapter_num))
         
         # 排序規則：
@@ -1290,9 +1375,9 @@ class HyReadScraper:
                 markdown_lines.append(f"{footnote}\n\n")
         
         # 在章節末尾添加"回到目錄"鏈接（除了目錄頁本身）
-        if not is_toc_chapter and toc_anchor:
-            markdown_lines.append("\n---\n\n")
-            markdown_lines.append(f"[📚 回到目錄](#{toc_anchor})\n")
+        # if not is_toc_chapter and toc_anchor:
+        #     markdown_lines.append("\n---\n\n")
+        #     markdown_lines.append(f"[📚 回到目錄](#{toc_anchor})\n")
         
         return ''.join(markdown_lines)
     
@@ -1535,6 +1620,15 @@ class HyReadScraper:
             if not found_new_chapter:
                 print(f"   ℹ️  本頁沒有新章節（可能還在同一章節中）")
 
+            # 檢查是否顯示"閱讀結束"（優先終止條件）
+            try:
+                reading_end = reading_page.locator('div.sc-1wqquil-3:has-text("閱讀結束")')
+                if await reading_end.count() > 0:
+                    print("✅ 檢測到「閱讀結束」標記，停止爬取")
+                    break
+            except Exception as e:
+                pass  # 忽略錯誤，繼續檢查其他條件
+            
             # 檢查是否為最後一頁（主要終止條件）
             if await self.is_last_page(reading_page):
                 print("✅ 已到達最後一頁（全文 100% 且本章最後一頁）")
@@ -1612,7 +1706,7 @@ class HyReadScraper:
         print("=" * 60)
 
         # 對章節進行智能排序
-        sorted_chapter_order = self.sort_chapters(chapter_order)
+        sorted_chapter_order = self.sort_chapters(chapter_order, chapters)
         
         print("\n" + "=" * 60)
         print("📖 章節排序結果：")
