@@ -2367,7 +2367,7 @@ class HyReadScraper:
         logger.success(f"✅ 爬取完成！共找到 {len(chapters)} 個不重複的章節 (掃描 {page_number} 頁)")
         logger.info("=" * 60)
 
-        # 對章節進行智能排序
+        # 對章節進行智能排序  測試
         sorted_chapter_order = self.sort_chapters(chapter_order, chapters)
 
         logger.info("\n" + "=" * 60)
