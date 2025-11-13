@@ -320,95 +320,109 @@ class HyReadScraper:
 
         # 檢查線上閱讀按鈕
         try:
-            # 定位線上閱讀按鈕
+            # 方案1: 定位線上閱讀按鈕（未借閱的情況）
             read_button = page.locator('button.btn-collect:has-text("線上閱讀")')
+            button_to_click = None
+            is_already_borrowed = False
 
             # 檢查按鈕是否存在
-            if await read_button.count() == 0:
-                logger.error("❌ 找不到線上閱讀按鈕")
-                return False
+            if await read_button.count() > 0:
+                # 獲取按鈕的 title 屬性
+                button_title = await read_button.get_attribute('title')
+                logger.info(f"📊 按鈕狀態: {button_title}")
 
-            # 獲取按鈕的 title 屬性
-            button_title = await read_button.get_attribute('title')
-            logger.info(f"📊 按鈕狀態: {button_title}")
+                # 使用正則表達式提取可用數量
+                match = re.search(r'線上閱讀人數.*?尚有(\d+)本', button_title, re.DOTALL)
 
-            # 使用正則表達式提取可用數量
-            match = re.search(r'線上閱讀人數.*?尚有(\d+)本', button_title, re.DOTALL)
+                if match:
+                    available_count = int(match.group(1))
+                    logger.info(f"📊 可借閱數量: {available_count} 本")
 
-            if match:
-                available_count = int(match.group(1))
-                logger.info(f"📊 可借閱數量: {available_count} 本")
-
-                if available_count > 0:
-                    logger.success("✅ 書籍可借閱，準備點擊線上閱讀按鈕...")
-
-                    # 點擊線上閱讀按鈕
-                    await read_button.click()
-                    await asyncio.sleep(3)
-
-                    # 檢查是否成功開啟閱讀頁面
-                    # 可能會開啟新分頁或彈出視窗
-                    current_url = page.url
-                    logger.info(f"📍 當前 URL: {current_url}")
-
-                    # 檢查所有頁面
-                    all_pages = page.context.pages
-                    logger.info(f"📄 目前開啟的頁面數: {len(all_pages)}")
-
-                    reading_page = None
-
-                    if len(all_pages) > 1:
-                        logger.success("✅ 已開啟新的閱讀視窗")
-                        # 切換到新頁面
-                        reading_page = all_pages[-1]
-                        await asyncio.sleep(2)
-                        logger.info(f"📍 閱讀頁面 URL: {reading_page.url}")
+                    if available_count > 0:
+                        logger.success("✅ 書籍可借閱，準備點擊線上閱讀按鈕...")
+                        button_to_click = read_button
                     else:
-                        # 如果沒有開啟新頁面，可能在當前頁面中打開
-                        logger.warning("⚠️  未偵測到新視窗，檢查當前頁面...")
-
-                        # 等待頁面可能的變化
-                        await asyncio.sleep(2)
-
-                        # 檢查當前頁面 URL 是否改變
-                        if page.url != current_url or "reader" in page.url.lower():
-                            logger.success("✅ 閱讀器在當前頁面中打開")
-                            reading_page = page
-                        else:
-                            # 再等待並重新檢查
-                            await asyncio.sleep(3)
-                            all_pages = page.context.pages
-                            if len(all_pages) > 1:
-                                reading_page = all_pages[-1]
-                                logger.success(f"✅ 延遲偵測到新視窗: {reading_page.url}")
-                            else:
-                                logger.warning("⚠️  仍未偵測到閱讀視窗，使用當前頁面")
-                                reading_page = page
-
-                    logger.info("\n" + "="*60)
-                    logger.success("✅ 借閱成功！")
-                    logger.info("="*60)
-
-                    # 如果啟用爬蟲，返回閱讀頁面用於後續爬取
-                    if self.enable_scraping:
-                        if reading_page:
-                            logger.info(f"📖 將使用頁面進行爬取: {reading_page.url}")
-                            return reading_page
-                        else:
-                            logger.error("❌ 無法獲取閱讀頁面")
-                            return False
-                    else:
-                        return True
+                        logger.warning("⚠️  目前沒有可借閱的副本")
+                        return False
                 else:
-                    logger.warning("⚠️  目前沒有可借閱的副本")
-                    return False
+                    logger.warning("⚠️  無法解析可借閱數量，嘗試直接點擊...")
+                    button_to_click = read_button
             else:
-                logger.warning("⚠️  無法解析可借閱數量")
-                # 嘗試直接點擊看看
-                logger.info("🔍 嘗試直接點擊按鈕...")
-                await read_button.click()
+                # 方案2: 檢查是否已借閱（"開啟"按鈕）
+                logger.info("📖 未找到「線上閱讀」按鈕，檢查是否已借閱...")
+                open_button = page.locator('input[value="開啟"]')
+                
+                if await open_button.count() > 0:
+                    logger.success("✅ 書籍已借閱，找到「開啟」按鈕")
+                    button_to_click = open_button
+                    is_already_borrowed = True
+                else:
+                    logger.error("❌ 找不到「線上閱讀」或「開啟」按鈕")
+                    return False
+
+            # 點擊按鈕（線上閱讀 或 開啟）
+            if button_to_click:
+                if is_already_borrowed:
+                    logger.info("🖱️  點擊「開啟」按鈕...")
+                else:
+                    logger.info("🖱️  點擊「線上閱讀」按鈕...")
+                
+                await button_to_click.click()
                 await asyncio.sleep(3)
-                return True
+
+                # 檢查是否成功開啟閱讀頁面
+                # 可能會開啟新分頁或彈出視窗
+                current_url = page.url
+                logger.info(f"📍 當前 URL: {current_url}")
+
+                # 檢查所有頁面
+                all_pages = page.context.pages
+                logger.info(f"📄 目前開啟的頁面數: {len(all_pages)}")
+
+                reading_page = None
+
+                if len(all_pages) > 1:
+                    logger.success("✅ 已開啟新的閱讀視窗")
+                    # 切換到新頁面
+                    reading_page = all_pages[-1]
+                    await asyncio.sleep(2)
+                    logger.info(f"📍 閱讀頁面 URL: {reading_page.url}")
+                else:
+                    # 如果沒有開啟新頁面，可能在當前頁面中打開
+                    logger.warning("⚠️  未偵測到新視窗，檢查當前頁面...")
+
+                    # 等待頁面可能的變化
+                    await asyncio.sleep(2)
+
+                    # 檢查當前頁面 URL 是否改變
+                    if page.url != current_url or "reader" in page.url.lower():
+                        logger.success("✅ 閱讀器在當前頁面中打開")
+                        reading_page = page
+                    else:
+                        # 再等待並重新檢查
+                        await asyncio.sleep(3)
+                        all_pages = page.context.pages
+                        if len(all_pages) > 1:
+                            reading_page = all_pages[-1]
+                            logger.success(f"✅ 延遲偵測到新視窗: {reading_page.url}")
+                        else:
+                            logger.warning("⚠️  仍未偵測到閱讀視窗，使用當前頁面")
+                            reading_page = page
+
+                logger.info("\n" + "="*60)
+                logger.success("✅ 開啟成功！")
+                logger.info("="*60)
+
+                # 如果啟用爬蟲，返回閱讀頁面用於後續爬取
+                if self.enable_scraping:
+                    if reading_page:
+                        logger.info(f"📖 將使用頁面進行爬取: {reading_page.url}")
+                        return reading_page
+                    else:
+                        logger.error("❌ 無法獲取閱讀頁面")
+                        return False
+                else:
+                    return True
 
         except Exception as e:
             logger.error(f"❌ 檢查或借閱書籍時發生錯誤: {e}")
@@ -526,6 +540,9 @@ class HyReadScraper:
             html = re.sub(r'<em>(.*?)</em>', r'*\1*', html)
             html = re.sub(r'<i>(.*?)</i>', r'*\1*', html)
 
+            # 特殊 span 類：gfontorange -> 粗體
+            html = re.sub(r'<span[^>]*class="[^"]*gfontorange[^"]*"[^>]*>(.*?)</span>', r'**\1**', html)
+            
             # 移除其他 HTML 標籤但保留內容
             html = re.sub(r'<span[^>]*>(.*?)</span>', r'\1', html)
             html = re.sub(r'<div[^>]*>(.*?)</div>', r'\1', html)
@@ -1154,9 +1171,22 @@ class HyReadScraper:
                     text_content = await self.extract_html_with_formatting(element)
 
                     if text_content.strip():
+                        # 檢查是否有特殊 class 需要處理
+                        element_class = await element.get_attribute('class') or ''
+                        
+                        # 處理特殊樣式類
+                        final_content = text_content.strip()
+                        
+                        # titlebig 類：大標題，加粗體
+                        if 'titlebig' in element_class:
+                            final_content = f"**{final_content}**"
+                        # titlemid 類：中等標題，加粗體
+                        elif 'titlemid' in element_class:
+                            final_content = f"**{final_content}**"
+                        
                         content_items.append({
                             'type': tag_name,
-                            'content': text_content.strip()
+                            'content': final_content
                         })
 
             # 抓取不在 figure 內的獨立圖片
@@ -1906,7 +1936,7 @@ class HyReadScraper:
             await page.keyboard.press('ArrowRight')
 
             # 等待頁面載入
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.1)
 
             return True
 
@@ -1991,7 +2021,7 @@ class HyReadScraper:
                             break
                         
                         if attempt < 5:
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(0.2)
                     
                     if not canvas_ready:
                         logger.info(f"         ⚠️  Canvas[{i}] 可能為空或未渲染完成，跳過")
@@ -2153,7 +2183,7 @@ class HyReadScraper:
                 logger.info(f"   ⚠️  翻頁失敗")
                 break
             
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)
         
         logger.info("\n" + "=" * 60)
         logger.success(f"✅ 爬取完成！")
@@ -2170,9 +2200,37 @@ class HyReadScraper:
         
         return '\n'.join(markdown_lines)
 
+    def _generate_chapter_hash(self, chapter_data: Dict[str, any]) -> str:
+        """
+        為章節內容生成唯一的哈希值（基於文字內容和圖片）
+
+        Args:
+            chapter_data: 章節資料字典
+
+        Returns:
+            MD5 哈希值
+        """
+        # 收集所有文字內容
+        text_parts = []
+        for item in chapter_data.get('content_items', []):
+            text_parts.append(item.get('content', ''))
+        
+        # 收集所有圖片 URL
+        image_urls = []
+        for img in chapter_data.get('images', []):
+            image_urls.append(img.get('src', ''))
+        for img in chapter_data.get('figure_images', []):
+            image_urls.append(img.get('src', ''))
+        
+        # 組合成唯一字符串
+        unique_string = '|||'.join(text_parts) + '###' + '|||'.join(image_urls)
+        
+        # 生成 MD5 哈希
+        return hashlib.md5(unique_string.encode('utf-8')).hexdigest()
+
     async def scrape_entire_book(self, reading_page: Page) -> str:
         """
-        爬取整本書的內容（以章節為單位）
+        爬取整本書的內容（按 iframe 出現順序，使用內容哈希去重）
 
         Args:
             reading_page: 閱讀頁面的 Page 物件
@@ -2181,7 +2239,7 @@ class HyReadScraper:
             完整的 Markdown 內容
         """
         logger.info("\n" + "=" * 60)
-        logger.info("📚 開始爬取書籍內容（以章節為單位）")
+        logger.info("📚 開始爬取書籍內容（按 iframe 順序）")
         logger.info("=" * 60)
 
         # 如果需要下載圖片，建立圖片目錄
@@ -2196,9 +2254,9 @@ class HyReadScraper:
         # 等待頁面完全載入
         await asyncio.sleep(5)
 
-        # 儲存章節，key = 章節名，value = 章節資料
-        chapters = {}
-        chapter_order = []  # 記錄章節出現順序
+        # 使用列表按順序存儲章節（保持 iframe 出現順序）
+        chapters_list = []  # [(chapter_data, chapter_hash), ...]
+        processed_hashes = set()  # 已處理的內容哈希
         toc_links = []  # TOC 目錄鏈接（用於智能排序）
 
         page_number = 0
@@ -2216,7 +2274,7 @@ class HyReadScraper:
                 if await self.is_toc_page(iframe):
                     toc_links = await self.extract_toc_links(iframe)
                     if toc_links:
-                        logger.success(f"✅ 已提取 TOC 目錄（共 {len(toc_links)} 項），將用於智能排序")
+                        logger.success(f"✅ 已提取 TOC 目錄（共 {len(toc_links)} 項）")
                         break
         except Exception as e:
             logger.warning(f"⚠️  提取 TOC 失敗: {e}")
@@ -2228,14 +2286,14 @@ class HyReadScraper:
             progress = await self.get_reading_progress(reading_page)
             logger.info(f"\n📖 正在掃描第 {page_number} 頁... [{progress['text']}] (進度: {progress['total_percent']}%)")
 
-            # 獲取所有可見的 iframe
+            # 獲取所有可見的 iframe（按順序）
             visible_iframes = await self.get_all_visible_iframes(reading_page)
 
-            found_new_chapter = False
+            found_new_content = False
 
-            # 從每個 iframe 抓取章節
+            # 按 iframe[0], iframe[1], iframe[2]... 的順序處理
             for iframe_index, iframe in enumerate(visible_iframes):
-                logger.info(f"      📄 正在抓取 iframe[{iframe_index}] 的章節...")
+                logger.info(f"      📄 正在抓取 iframe[{iframe_index}]...")
 
                 # 抓取章節資料（傳遞 TOC 用於智能排序）
                 chapter_data = await self.scrape_chapter_from_iframe(iframe, base_url, toc_links)
@@ -2244,24 +2302,27 @@ class HyReadScraper:
                     logger.info(f"         ⚠️  iframe[{iframe_index}] 沒有內容")
                     continue
 
-                chapter_name = chapter_data['name']
+                # 生成內容哈希（基於文字+圖片）
+                content_hash = self._generate_chapter_hash(chapter_data)
 
-                # 檢查是否為新章節
-                if chapter_name not in chapters:
-                    chapters[chapter_name] = chapter_data
-                    chapter_order.append(chapter_name)
-                    found_new_chapter = True
+                # 檢查是否為新內容（用哈希判斷，不用章節名）
+                if content_hash not in processed_hashes:
+                    # 新內容，加入列表
+                    chapters_list.append((chapter_data, content_hash))
+                    processed_hashes.add(content_hash)
+                    found_new_content = True
 
-                    # 顯示章節預覽
-                    display_name = chapter_name if chapter_name != "__no_chapter__" else "【無章節名稱（可能是封面或前言）】"
-                    logger.info(f"         ✅ 新章節: {display_name}")
+                    chapter_name = chapter_data['name']
+                    display_name = chapter_name if chapter_name != "__no_chapter__" else "【無章節名稱】"
+                    logger.info(f"         ✅ 新內容 (#{len(chapters_list)}): {display_name}")
+                    logger.info(f"            哈希: {content_hash[:12]}...")
 
                     # DEBUG: 顯示內容預覽
                     if chapter_data['content_items']:
                         first_item = chapter_data['content_items'][0]
                         last_item = chapter_data['content_items'][-1]
-                        logger.info(f"         🔍 第一項 ({first_item['type']}): {first_item['content'][:80]}...")
-                        logger.info(f"         🔍 最後項 ({last_item['type']}): {last_item['content'][:80]}...")
+                        logger.debug(f"         🔍 第一項 ({first_item['type']}): {first_item['content'][:60]}...")
+                        logger.debug(f"         🔍 最後項 ({last_item['type']}): {last_item['content'][:60]}...")
 
                     total_images = len(chapter_data['images']) + len(chapter_data.get('figure_images', []))
                     logger.info(f"         📊 統計: {len(chapter_data['content_items'])} 個元素, {total_images} 張圖片")
@@ -2270,11 +2331,11 @@ class HyReadScraper:
                     if self.download_images and total_images > 0:
                         await self.download_images_for_chapter(chapter_data, page_number, base_url)
                 else:
-                    logger.info(f"         ⚠️  重複章節: {chapter_name}")
+                    logger.debug(f"         🔄 iframe[{iframe_index}] 內容重複（哈希: {content_hash[:12]}...）")
 
-            # 如果沒有找到新章節，只是提示，不作為終止條件
-            if not found_new_chapter:
-                logger.info(f"   ℹ️  本頁沒有新章節（可能還在同一章節中）")
+            # 如果沒有找到新內容，只是提示，不作為終止條件
+            if not found_new_content:
+                logger.info(f"   ℹ️  本頁所有 iframe 都是已處理過的內容")
 
             # 檢查是否顯示"閱讀結束"（優先終止條件）
             try:
@@ -2294,18 +2355,18 @@ class HyReadScraper:
             if progress['total_percent'] >= 100:
                 full_progress_count += 1
 
-                if not found_new_chapter:
-                    # 如果全文 100% 且沒有新章節
-                    logger.info(f"   ⚠️  已達全文 100% 且無新章節（第 {full_progress_count} 次）")
+                if not found_new_content:
+                    # 如果全文 100% 且沒有新內容
+                    logger.info(f"   ⚠️  已達全文 100% 且無新內容（第 {full_progress_count} 次）")
 
                     if full_progress_count >= 5:
-                        # 連續 5 次 100% 且無新章節，提前終止
-                        logger.info("   🛑 連續 5 次偵測到全文 100% 且無新章節，停止爬取")
+                        # 連續 5 次 100% 且無新內容，提前終止
+                        logger.info("   🛑 連續 5 次偵測到全文 100% 且無新內容，停止爬取")
                         logger.info("   💡 提示：這可能是網站進度顯示錯誤（例如：全文 100%．本章第 1 頁 / 2 頁）")
                         break
                 else:
-                    # 有新章節，說明還沒結束，只是顯示 100%
-                    logger.info(f"   ℹ️  已達全文 100% 但發現新章節，繼續爬取...")
+                    # 有新內容，說明還沒結束，只是顯示 100%
+                    logger.info(f"   ℹ️  已達全文 100% 但發現新內容，繼續爬取...")
                     full_progress_count = 0
 
                 if full_progress_count >= 10:
@@ -2318,83 +2379,96 @@ class HyReadScraper:
 
             # 根據設定選擇翻頁策略
             if self.smart_page_turn:
-                # 智能翻頁：根據本章剩餘頁數決定翻多少頁
+                # 智能翻頁：根據本章剩餘頁數決定翻多少次（考慮 turn_page 可能一次翻2頁）
                 remaining_pages = progress['chapter_total'] - progress['chapter_current']
+                current_chapter_page = progress['chapter_current']
 
                 if remaining_pages <= 0:
-                    # 章節結束，翻 1 頁到下一章
-                    pages_to_turn = 1
-                    logger.info(f"   ⏭️  章節已結束，翻 1 頁到下一章...")
-                elif remaining_pages <= 2:
-                    # 接近章節尾部，翻 1 頁
-                    pages_to_turn = 1
-                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，謹慎翻 1 頁...")
+                    # 章節結束，只翻 1 次到下一章
+                    turn_count = 1
+                    logger.info(f"   ⏭️  章節已結束，翻 1 次到下一章...")
                 elif remaining_pages <= 5:
-                    # 章節中後段，翻 2 頁
-                    pages_to_turn = 2
-                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 2 頁...")
-                elif remaining_pages > 10:
-                    # 章節前段，直接跳到倒數第 3 頁
-                    pages_to_turn = remaining_pages - 3
-                    logger.info(f"   🚀 本章剩餘 {remaining_pages} 頁，直接跳到倒數第 3 頁（翻 {pages_to_turn} 頁）...")
+                    # 接近章節尾部，只翻 1 次（避免跳過內容）
+                    turn_count = 1
+                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，謹慎翻 1 次（當前第 {current_chapter_page}/{progress['chapter_total']} 頁）...")
+                elif remaining_pages <= 10:
+                    # 章節中後段，翻 2 次
+                    turn_count = 2
+                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 2 次...")
+                elif remaining_pages > 15:
+                    # 章節前段，快速翻到接近末尾（保留最後 5 頁慢慢翻）
+                    # 計算需要翻幾次才能到剩餘 5 頁（假設每次翻 2 頁）
+                    target_remaining = 5
+                    pages_to_skip = remaining_pages - target_remaining
+                    # 保守估計：每次翻頁可能移動 1-2 頁，我們按 1.5 頁計算
+                    calculated_turns = max(1, int(pages_to_skip / 1.5))
+                    # 限制每次最多翻 10 次（避免一次跳太多）
+                    turn_count = min(calculated_turns, 10)
+                    logger.info(f"   🚀 本章剩餘 {remaining_pages} 頁，快速翻 {turn_count} 次（上限: 10 次）...")
                 else:
-                    # 章節中段（6-10頁），翻 remaining - 3 或 3 頁
-                    pages_to_turn = max(3, remaining_pages - 3)
-                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 {pages_to_turn} 頁...")
+                    # 章節中段（11-15頁），翻 3 次
+                    turn_count = 3
+                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 {turn_count} 次...")
             else:
-                # 固定翻頁：每次翻固定頁數
-                pages_to_turn = self.pages_per_turn
-                logger.info(f"   ⏭️  使用固定翻頁策略，翻 {pages_to_turn} 頁...")
+                # 固定翻頁：每次翻固定次數
+                turn_count = self.pages_per_turn
+                logger.info(f"   ⏭️  使用固定翻頁策略，翻 {turn_count} 次...")
 
-            for i in range(pages_to_turn):
+            # 執行翻頁
+            for i in range(turn_count):
                 if page_number + i >= self.max_pages:
                     break
 
                 success = await self.turn_page(reading_page)
                 if not success:
-                    logger.info(f"   ⚠️  第 {i+1} 次翻頁失敗")
+                    logger.warning(f"   ⚠️  第 {i+1} 次翻頁失敗")
                     break
 
-                # 短暫等待（翻頁多時減少等待）
-                if pages_to_turn > 5:
-                    await asyncio.sleep(0.3)  # 快速翻頁時縮短等待
-                else:
-                    await asyncio.sleep(0.5)
+                # 等待頁面加載
+                await asyncio.sleep(0.3)
+                
+                # 在關鍵位置（剩餘5頁以內）檢查實際進度
+                if self.smart_page_turn and i == 0 and remaining_pages <= 5:
+                    new_progress = await self.get_reading_progress(reading_page)
+                    actual_moved = new_progress['chapter_current'] - current_chapter_page
+                    if actual_moved > 1:
+                        logger.debug(f"      💡 檢測到翻頁實際移動了 {actual_moved} 頁（從 {current_chapter_page} → {new_progress['chapter_current']}）")
+                        # 如果一次翻了多頁，就不再繼續翻了
+                        break
 
-            page_number += (pages_to_turn - 1)  # 循環會再 +1
+            page_number += (turn_count - 1)  # 循環會再 +1
 
         logger.info("\n" + "=" * 60)
-        logger.success(f"✅ 爬取完成！共找到 {len(chapters)} 個不重複的章節 (掃描 {page_number} 頁)")
+        logger.success(f"✅ 爬取完成！共找到 {len(chapters_list)} 個不重複的內容區塊 (掃描 {page_number} 頁)")
         logger.info("=" * 60)
 
-        # 對章節進行智能排序  測試
-        sorted_chapter_order = self.sort_chapters(chapter_order, chapters)
-
+        # 內容已經按 iframe 順序存儲，無需排序
         logger.info("\n" + "=" * 60)
-        logger.info("📖 章節排序結果：")
+        logger.info("📖 內容已按 iframe 出現順序排列（無需重新排序）")
         logger.info("=" * 60)
 
         # 建立章節名稱到錨點 ID 的映射
         chapter_map = {}
         toc_anchor = None  # 目錄的錨點 ID
 
-        for chapter_name in sorted_chapter_order:
+        # 先掃描一遍，建立錨點映射
+        for idx, (chapter_data, _) in enumerate(chapters_list):
+            chapter_name = chapter_data['name']
             if chapter_name == "目錄":
-                # 為目錄設置固定錨點
                 toc_anchor = "toc"
                 chapter_map[chapter_name] = toc_anchor
             elif chapter_name != "__no_chapter__":
-                anchor_id = self._generate_anchor_id(chapter_name)
+                # 為每個章節生成唯一錨點（加上索引避免重複）
+                anchor_id = f"{self._generate_anchor_id(chapter_name)}-{idx}"
                 chapter_map[chapter_name] = anchor_id
 
-        # 按照排序後的順序轉換章節為 Markdown
+        # 按順序轉換為 Markdown
         all_markdown = []
 
-        for idx, chapter_name in enumerate(sorted_chapter_order, 1):
-            chapter_data = chapters[chapter_name]
-
-            display_name = chapter_name if chapter_name != "__no_chapter__" else "前言/封面"
-            logger.info(f"📝 第 {idx} 章: {display_name}")
+        for idx, (chapter_data, content_hash) in enumerate(chapters_list, 1):
+            chapter_name = chapter_data['name']
+            display_name = chapter_name if chapter_name != "__no_chapter__" else "【無章節名稱】"
+            logger.info(f"📝 第 {idx} 個區塊: {display_name} (哈希: {content_hash[:12]}...)")
 
             # 為非目錄章節添加錨點
             chapter_markdown_parts = []
@@ -2481,15 +2555,15 @@ class HyReadScraper:
                         output_file = output_dir / f"book_{self.book_id}_{timestamp}.md"
 
                     # 生成 Markdown 標題
-                    header = f"# {self.book_title if self.book_title else '書籍內容'}\n\n"
-                    if self.book_title:
-                        header += f"- 書名: {self.book_title}\n"
+                    # header = f"# {self.book_title if self.book_title else '書籍內容'}\n\n"
+                    # if self.book_title:
+                    #     header += f"- 書名: {self.book_title}\n"
                     # header += f"- 書籍 ID: {self.book_id}\n"
                     # header += f"- 爬取時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                     # header += "---\n\n"
 
                     with open(output_file, 'w', encoding='utf-8') as f:
-                        f.write(header + markdown_content)
+                        f.write(markdown_content)
 
                     logger.info(f"\n💾 已儲存至: {output_file}")
                     logger.info(f"📊 檔案大小: {output_file.stat().st_size / 1024:.2f} KB")
