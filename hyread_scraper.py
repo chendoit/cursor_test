@@ -460,6 +460,73 @@ class HyReadScraper:
             logger.warning(f"⚠️  未找到或無法點擊「我知道了」按鈕: {e}")
             return False
 
+    async def handle_reading_progress_popup(self, page: Page) -> bool:
+        """
+        處理閱讀進度彈窗（如果存在）
+
+        Args:
+            page: Playwright 頁面物件
+
+        Returns:
+            是否處理了彈窗
+        """
+        try:
+            logger.info("\n🔍 檢查是否有閱讀進度彈窗...")
+
+            # 更精確的選擇器：同時檢查 class 和文字內容
+            progress_popup = page.locator('div.reader-popover[aria-label*="閱讀進度"]')
+            
+            # 如果沒找到，嘗試第二種方式
+            if await progress_popup.count() == 0:
+                progress_popup = page.locator('div[class*="reader-popover"]:has-text("請問是否前往")')
+
+            # 等待最多 2 秒，給彈窗足夠時間出現
+            try:
+                await progress_popup.wait_for(state="visible", timeout=2000)
+                
+                # 確認彈窗真的可見
+                if not await progress_popup.is_visible():
+                    logger.info("ℹ️  沒有閱讀進度彈窗，繼續執行")
+                    return False
+                
+                # 找到了彈窗，提取進度信息
+                popup_text = await progress_popup.text_content()
+                logger.info(f"📍 發現閱讀進度彈窗: {popup_text[:60].replace(chr(10), ' ')}...")
+                
+                # 在彈窗內部查找「略過」按鈕（更精確）
+                skip_button = progress_popup.locator('button:has-text("略過")').first
+                
+                # 確保按鈕存在且可點擊
+                if await skip_button.count() > 0:
+                    # 等待按鈕可點擊
+                    await skip_button.wait_for(state="visible", timeout=1000)
+                    
+                    logger.info("🖱️  點擊「略過」按鈕...")
+                    await skip_button.click()
+                    
+                    # 等待彈窗消失（重要！）
+                    try:
+                        await progress_popup.wait_for(state="hidden", timeout=3000)
+                        logger.success("✅ 已略過閱讀進度提示，彈窗已關閉")
+                    except:
+                        logger.warning("⚠️  彈窗可能未完全關閉，繼續執行")
+                    
+                    # 額外等待，確保頁面穩定
+                    await asyncio.sleep(1.5)
+                    return True
+                else:
+                    logger.warning("⚠️  找不到「略過」按鈕")
+                    return False
+                    
+            except Exception as timeout_err:
+                # 沒有彈窗或超時，這是正常情況
+                logger.info("ℹ️  沒有閱讀進度彈窗，繼續執行")
+                return False
+
+        except Exception as e:
+            logger.debug(f"檢查閱讀進度彈窗時發生錯誤: {e}")
+            return False
+
     async def get_all_visible_iframes(self, page: Page) -> list:
         """
         獲取所有可見的 iframe
@@ -2113,11 +2180,17 @@ class HyReadScraper:
         self.images_dir = Path("downloads") / "images" / f"book_{self.book_id}"
         self.images_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 圖片將保存到: {self.images_dir}")
-        
+
+        await asyncio.sleep(0.5)
+
+        # 處理閱讀進度彈窗（如果有）
+        await self.handle_reading_progress_popup(reading_page)
+
+        await asyncio.sleep(0.5)
+
         # 點擊「我知道了」按鈕
         await self.click_accept_button(reading_page)
-        await asyncio.sleep(5)
-        
+
         # 儲存所有 Canvas 圖片
         all_canvas_images = []
         page_number = 0
@@ -2248,11 +2321,17 @@ class HyReadScraper:
             self.images_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"📁 圖片將保存到: {self.images_dir}")
 
-        # 點擊「我知道了」按鈕
-        await self.click_accept_button(reading_page)
+        # 等待頁面完全載入
+        await asyncio.sleep(0.5)
+
+        # 處理閱讀進度彈窗（如果有）
+        await self.handle_reading_progress_popup(reading_page)
 
         # 等待頁面完全載入
-        await asyncio.sleep(5)
+        await asyncio.sleep(0.5)
+
+        # 點擊「我知道了」按鈕
+        await self.click_accept_button(reading_page)
 
         # 使用列表按順序存儲章節（保持 iframe 出現順序）
         chapters_list = []  # [(chapter_data, chapter_hash), ...]
