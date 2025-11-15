@@ -76,6 +76,15 @@ class HyReadScraper:
         # 翻頁策略相關
         self.smart_page_turn = os.getenv("SMART_PAGE_TURN", "true").lower() == "true"  # 是否啟用智能翻頁
         self.pages_per_turn = int(os.getenv("PAGES_PER_TURN", "3"))  # 固定翻頁數量（當智能翻頁關閉時）
+        
+        # 翻頁按鍵設定
+        page_turn_key = os.getenv("PAGE_TURN_KEY", "ArrowRight")
+        # 驗證按鍵值是否有效
+        valid_keys = ["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
+        if page_turn_key not in valid_keys:
+            logger.warning(f"⚠️  無效的翻頁按鍵: {page_turn_key}，使用預設值 ArrowRight")
+            page_turn_key = "ArrowRight"
+        self.page_turn_key = page_turn_key
 
         # 圖片下載相關
         self.images_dir = None
@@ -120,6 +129,16 @@ class HyReadScraper:
             logger.info(f"   - 下載圖片: {'是' if self.download_images else '否'}")
             logger.info(f"   - 純圖片書籍模式: {'是 (Canvas Only)' if self.image_only_mode else '否 (HTML + Canvas)'}")
             logger.info(f"   - 翻頁策略: {'智能翻頁' if self.smart_page_turn else f'固定翻頁（每次 {self.pages_per_turn} 頁）'}")
+            
+            # 顯示翻頁按鍵（加上友善的中文說明）
+            key_names = {
+                "ArrowRight": "右鍵 (→)",
+                "ArrowLeft": "左鍵 (←)",
+                "ArrowUp": "上鍵 (↑)",
+                "ArrowDown": "下鍵 (↓)"
+            }
+            key_display = key_names.get(self.page_turn_key, self.page_turn_key)
+            logger.info(f"   - 翻頁按鍵: {key_display}")
 
     async def solve_captcha(self, page: Page) -> str:
         """
@@ -2148,7 +2167,7 @@ class HyReadScraper:
 
     async def turn_page(self, page: Page) -> bool:
         """
-        翻到下一頁（模擬鍵盤右鍵）
+        翻到下一頁（使用配置的按鍵）
 
         Args:
             page: Playwright 頁面物件
@@ -2157,8 +2176,8 @@ class HyReadScraper:
             是否成功翻頁
         """
         try:
-            # 按下鍵盤右鍵
-            await page.keyboard.press('ArrowRight')
+            # 按下配置的翻頁按鍵
+            await page.keyboard.press(self.page_turn_key)
 
             # 等待頁面載入
             await asyncio.sleep(0.1)
@@ -2962,7 +2981,7 @@ async def main():
         success = await scraper.run(
             headless=False,
             slow_mo=100,
-            wait_time=10
+            wait_time=5
         )
 
         if success:
