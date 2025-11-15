@@ -729,6 +729,79 @@ class HyReadScraper:
             logger.info(f"         ⚠️  提取 figure 內容失敗: {e}")
             return None
 
+    async def _extract_container_content(self, container_element) -> list:
+        """
+        從 div[class^="container"] 元素中按順序提取圖片和說明文字
+        
+        支持多種格式變體：
+        - <div class="container">、<div class="container2">、<div class="container3"> 等
+        - <p class="caption">、<p class="caption2"> 等（任何包含 "caption" 的 class）
+        
+        處理格式如：
+        <div class="container2">
+            <div id="_idContainer019">
+                <img class="fit" src="image/p0018a.jpg" alt="" draggable="false">
+                <p class="caption ...">精美的日本繪畫屏風...</p>
+            </div>
+        </div>
+        
+        Args:
+            container_element: div[class^="container"] 元素
+            
+        Returns:
+            內容項目列表（按 DOM 順序）
+        """
+        try:
+            result_items = []
+            
+            # 查找所有子元素（img 和 p，按 DOM 順序）
+            children = container_element.locator('img, p')
+            child_count = await children.count()
+            
+            for i in range(child_count):
+                child = children.nth(i)
+                tag_name = await child.evaluate('el => el.tagName.toLowerCase()')
+                
+                if tag_name == 'img':
+                    # 處理圖片
+                    src = await child.get_attribute('src')
+                    alt = await child.get_attribute('alt') or '圖片'
+                    element_class = await child.get_attribute('class') or ''
+                    
+                    if src:
+                        result_items.append({
+                            'type': 'image',
+                            'image_src': src,
+                            'image_alt': alt,
+                            'image_class': element_class
+                        })
+                        
+                elif tag_name == 'p':
+                    # 處理說明文字（caption, caption2, caption3 等）
+                    element_class = await child.get_attribute('class') or ''
+                    text_content = await self.extract_html_with_formatting(child)
+                    
+                    if text_content.strip():
+                        # 如果 class 包含 "caption"，作為圖片說明
+                        # 支持: caption, caption2, caption3 等所有變體
+                        if 'caption' in element_class:
+                            result_items.append({
+                                'type': 'caption',
+                                'content': text_content.strip()
+                            })
+                        else:
+                            # 一般段落
+                            result_items.append({
+                                'type': 'p',
+                                'content': text_content.strip()
+                            })
+            
+            return result_items if result_items else None
+            
+        except Exception as e:
+            logger.info(f"         ⚠️  提取 container 內容失敗: {e}")
+            return None
+
     async def extract_chapter_name(self, iframe: FrameLocator) -> tuple:
         """
         從 iframe 中提取章節名稱和排序號（支持多種規則）
@@ -1211,9 +1284,20 @@ class HyReadScraper:
             # 抓取 body 內的所有元素
             body = iframe.locator('body')
 
-            # 一次性抓取所有內容元素（h1, h2, h3, h4, h5, h6, p, figure）並保持順序
-            # 使用 CSS 選擇器來選擇多個元素並保持順序
-            all_elements = body.locator('h1, h2, h3, h4, h5, h6, p, figure')
+            # 一次性抓取所有內容元素並保持順序
+            # 重要：排除 div[class^="container"] 和 figure 內部的 p, img，避免重複處理
+            # 這些元素會由專門的 _extract_container_content 和 _extract_figure_content 處理
+            all_elements = body.locator(
+                'h1:not(div[class^="container"] *, figure *), '
+                'h2:not(div[class^="container"] *, figure *), '
+                'h3:not(div[class^="container"] *, figure *), '
+                'h4:not(div[class^="container"] *, figure *), '
+                'h5:not(div[class^="container"] *, figure *), '
+                'h6:not(div[class^="container"] *, figure *), '
+                'p:not(div[class^="container"] *, figure *), '
+                'figure, '
+                'div[class^="container"]'
+            )
             element_count = await all_elements.count()
 
             for i in range(element_count):
@@ -1233,6 +1317,13 @@ class HyReadScraper:
                             'image_src': figure_data['image_src'],
                             'image_alt': figure_data['image_alt']
                         })
+                elif tag_name == 'div':
+                    # 處理 div[class^="container"] 內的圖片和說明文字（按順序）
+                    # 支持 container, container2, container3 等所有變體
+                    container_data = await self._extract_container_content(element)
+                    if container_data:
+                        for item in container_data:
+                            content_items.append(item)
                 else:
                     # 獲取元素的文字內容（保留格式）
                     text_content = await self.extract_html_with_formatting(element)
@@ -1240,12 +1331,21 @@ class HyReadScraper:
                     if text_content.strip():
                         # 檢查是否有特殊 class 需要處理
                         element_class = await element.get_attribute('class') or ''
+                        epub_type = await element.get_attribute('epub:type') or ''
                         
                         # 處理特殊樣式類
                         final_content = text_content.strip()
                         
+                        # footnote 類：腳註，標記為 footnote
+                        if 'footnote' in element_class or epub_type == 'footnote':
+                            # 提取腳註編號（從 <a> 標籤內容）
+                            footnote_num = await element.locator('a').first.text_content() if await element.locator('a').count() > 0 else ''
+                            if footnote_num.strip():
+                                final_content = f"[^{footnote_num.strip()}]: {final_content}"
+                            else:
+                                final_content = f"**[註]** {final_content}"
                         # titlebig 類：大標題，加粗體
-                        if 'titlebig' in element_class:
+                        elif 'titlebig' in element_class:
                             final_content = f"**{final_content}**"
                         # titlemid 類：中等標題，加粗體
                         elif 'titlemid' in element_class:
@@ -1257,6 +1357,7 @@ class HyReadScraper:
                         })
 
             # 抓取不在 figure 內的獨立圖片
+            # 注意：這裡包括 container 內的圖片，用於下載，但在 Markdown 輸出時會去重
             images = []
 
             # 一般圖片（排除 figure 內的）
@@ -1748,7 +1849,7 @@ class HyReadScraper:
 
     async def download_images_for_chapter(self, chapter_data: Dict[str, any], page_number: int, base_url: str = None):
         """
-        為章節下載所有圖片（包含 figure 中的圖片）
+        為章節下載所有圖片（包含 figure, container 中的圖片）
 
         Args:
             chapter_data: 章節資料字典
@@ -1766,6 +1867,32 @@ class HyReadScraper:
             url = image['src']
             local_path = await self.download_image(url, page_number, base_url)
             image['local_path'] = local_path
+        
+        # 下載 content_items 中的圖片（來自 div.container）
+        for item in chapter_data.get('content_items', []):
+            if item.get('type') in ['image', 'figure']:
+                img_src = item.get('image_src')
+                if img_src:
+                    # 檢查是否已在 images 或 figure_images 中
+                    already_downloaded = False
+                    for img in chapter_data['images']:
+                        if img['src'] == img_src:
+                            already_downloaded = True
+                            break
+                    if not already_downloaded:
+                        for img in chapter_data.get('figure_images', []):
+                            if img['src'] == img_src:
+                                already_downloaded = True
+                                break
+                    
+                    # 如果還沒下載，添加到 images 列表並下載
+                    if not already_downloaded:
+                        local_path = await self.download_image(img_src, page_number, base_url)
+                        chapter_data['images'].append({
+                            'src': img_src,
+                            'alt': item.get('image_alt', '圖片'),
+                            'local_path': local_path
+                        })
 
     def _generate_anchor_id(self, chapter_name: str) -> str:
         """
@@ -1828,10 +1955,10 @@ class HyReadScraper:
             markdown_lines.append("\n")
             return ''.join(markdown_lines)
 
-        # 處理有序內容（包含 figure）
+        # 處理有序內容（包含 figure, image, caption, footnote）
         for item in chapter_data['content_items']:
             item_type = item['type']
-            content = item['content']
+            content = item.get('content', '')
 
             if item_type == 'h1':
                 markdown_lines.append(f"\n## {content}\n")
@@ -1847,6 +1974,22 @@ class HyReadScraper:
                 markdown_lines.append(f"\n###### {content}\n")
             elif item_type == 'p':
                 markdown_lines.append(f"{content}\n")
+            elif item_type == 'image':
+                # 處理獨立圖片（來自 div.container）
+                img_src = item.get('image_src', '')
+                img_alt = item.get('image_alt', '圖片')
+
+                # 使用本地路徑（如果已下載）
+                img_path = img_src
+                for img in chapter_data.get('images', []):
+                    if img['src'] == img_src:
+                        img_path = img.get('local_path', img_src)
+                        break
+
+                markdown_lines.append(f"\n![{img_alt}]({img_path})\n")
+            elif item_type == 'caption':
+                # 處理圖片說明文字（來自 div.container）
+                markdown_lines.append(f"\n*{content}*\n\n")
             elif item_type == 'figure':
                 # 處理 figure（圖片 + 說明）
                 img_src = item.get('image_src', '')
@@ -1862,10 +2005,21 @@ class HyReadScraper:
 
                 markdown_lines.append(f"\n![{img_alt}]({img_path})\n\n")
 
-        # 處理獨立圖片（不在 figure 內的）
-        if chapter_data['images']:
+        # 處理獨立圖片（不在 figure 和 container 內的）
+        # 收集 content_items 中已經輸出的圖片 URL，避免重複
+        output_image_srcs = set()
+        for item in chapter_data['content_items']:
+            if item.get('type') in ['image', 'figure']:
+                img_src = item.get('image_src')
+                if img_src:
+                    output_image_srcs.add(img_src)
+        
+        # 只輸出未在 content_items 中出現的圖片
+        remaining_images = [img for img in chapter_data['images'] if img['src'] not in output_image_srcs]
+        
+        if remaining_images:
             markdown_lines.append("\n")
-            for image in chapter_data['images']:
+            for image in remaining_images:
                 # 優先使用本地路徑
                 img_path = image.get('local_path', image['src'])
                 alt_text = image.get('alt', '圖片')
@@ -2273,6 +2427,38 @@ class HyReadScraper:
         
         return '\n'.join(markdown_lines)
 
+    def _get_item_preview(self, item: dict) -> str:
+        """
+        獲取 content_item 的預覽文字（處理不同類型）
+        
+        Args:
+            item: content_item 字典
+            
+        Returns:
+            預覽文字（最多 60 字符）
+        """
+        item_type = item.get('type', 'unknown')
+        
+        if item_type == 'image':
+            # image 類型：顯示圖片來源
+            img_src = item.get('image_src', '')
+            img_alt = item.get('image_alt', '圖片')
+            return f"[圖片] {img_alt} ({img_src[:40]}...)" if len(img_src) > 40 else f"[圖片] {img_alt} ({img_src})"
+        elif item_type == 'figure':
+            # figure 類型：顯示說明文字和圖片來源
+            content = item.get('content', '')
+            img_src = item.get('image_src', '')
+            preview = content[:30] if len(content) > 30 else content
+            return f"[圖表] {preview}... ({img_src[:20]}...)" if len(content) > 30 else f"[圖表] {preview} ({img_src[:20]}...)"
+        elif item_type == 'caption':
+            # caption 類型：顯示說明文字
+            content = item.get('content', '')
+            return f"[說明] {content[:50]}..." if len(content) > 50 else f"[說明] {content}"
+        else:
+            # 其他類型（h1-h6, p）：顯示文字內容
+            content = item.get('content', '')
+            return f"{content[:60]}..." if len(content) > 60 else content
+
     def _generate_chapter_hash(self, chapter_data: Dict[str, any]) -> str:
         """
         為章節內容生成唯一的哈希值（基於文字內容和圖片）
@@ -2283,20 +2469,32 @@ class HyReadScraper:
         Returns:
             MD5 哈希值
         """
-        # 收集所有文字內容
-        text_parts = []
-        for item in chapter_data.get('content_items', []):
-            text_parts.append(item.get('content', ''))
+        # 收集所有文字內容和圖片信息
+        content_parts = []
         
-        # 收集所有圖片 URL
-        image_urls = []
+        for item in chapter_data.get('content_items', []):
+            item_type = item.get('type', '')
+            
+            if item_type == 'image':
+                # image 類型：使用圖片來源
+                content_parts.append(f"[IMAGE:{item.get('image_src', '')}]")
+            elif item_type == 'figure':
+                # figure 類型：使用說明文字 + 圖片來源
+                content_parts.append(f"[FIGURE:{item.get('content', '')}:{item.get('image_src', '')}]")
+            else:
+                # 其他類型：使用文字內容
+                content_parts.append(item.get('content', ''))
+        
+        # 收集所有獨立圖片 URL
         for img in chapter_data.get('images', []):
-            image_urls.append(img.get('src', ''))
+            content_parts.append(f"[IMG:{img.get('src', '')}]")
+        
+        # 收集所有 figure 圖片 URL
         for img in chapter_data.get('figure_images', []):
-            image_urls.append(img.get('src', ''))
+            content_parts.append(f"[FIG:{img.get('src', '')}]")
         
         # 組合成唯一字符串
-        unique_string = '|||'.join(text_parts) + '###' + '|||'.join(image_urls)
+        unique_string = '|||'.join(content_parts)
         
         # 生成 MD5 哈希
         return hashlib.md5(unique_string.encode('utf-8')).hexdigest()
@@ -2400,8 +2598,14 @@ class HyReadScraper:
                     if chapter_data['content_items']:
                         first_item = chapter_data['content_items'][0]
                         last_item = chapter_data['content_items'][-1]
-                        logger.debug(f"         🔍 第一項 ({first_item['type']}): {first_item['content'][:60]}...")
-                        logger.debug(f"         🔍 最後項 ({last_item['type']}): {last_item['content'][:60]}...")
+                        
+                        # 獲取第一項預覽（處理不同類型）
+                        first_preview = self._get_item_preview(first_item)
+                        logger.debug(f"         🔍 第一項 ({first_item['type']}): {first_preview}")
+                        
+                        # 獲取最後項預覽（處理不同類型）
+                        last_preview = self._get_item_preview(last_item)
+                        logger.debug(f"         🔍 最後項 ({last_item['type']}): {last_preview}")
 
                     total_images = len(chapter_data['images']) + len(chapter_data.get('figure_images', []))
                     logger.info(f"         📊 統計: {len(chapter_data['content_items'])} 個元素, {total_images} 張圖片")
