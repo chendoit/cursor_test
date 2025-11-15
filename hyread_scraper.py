@@ -610,6 +610,10 @@ class HyReadScraper:
             # 特殊 span 類：gfontorange -> 粗體
             html = re.sub(r'<span[^>]*class="[^"]*gfontorange[^"]*"[^>]*>(.*?)</span>', r'**\1**', html)
             
+            # Footnote 引用：<a class="ref" ...>1</a> -> [^1]
+            # 提取 footnote 編號並轉換為 Markdown 引用格式
+            html = re.sub(r'<a[^>]*class="[^"]*ref[^"]*"[^>]*>(\d+)</a>', r'[^\1]', html)
+            
             # 移除其他 HTML 標籤但保留內容
             html = re.sub(r'<span[^>]*>(.*?)</span>', r'\1', html)
             html = re.sub(r'<div[^>]*>(.*?)</div>', r'\1', html)
@@ -2458,6 +2462,57 @@ class HyReadScraper:
             # 其他類型（h1-h6, p）：顯示文字內容
             content = item.get('content', '')
             return f"{content[:60]}..." if len(content) > 60 else content
+    
+    def _renumber_footnotes(self, chapters_list: list, starting_number: int = 1) -> int:
+        """
+        為所有章節的 footnote 重新編號（避免跨章節編號衝突）
+        
+        Args:
+            chapters_list: 章節列表 [(chapter_data, content_hash), ...]
+            starting_number: 起始編號
+            
+        Returns:
+            下一個可用的 footnote 編號
+        """
+        current_number = starting_number
+        
+        for chapter_data, _ in chapters_list:
+            # 建立該章節的 footnote 編號映射表 (原編號 -> 新編號)
+            footnote_map = {}
+            
+            # 第一步：先收集所有 footnote 定義，建立映射表
+            # 只掃描定義，不掃描引用，避免重複計數
+            for item in chapter_data.get('content_items', []):
+                if item.get('type') == 'p':
+                    content = item.get('content', '')
+                    # 檢查是否為 footnote 定義（以 [^數字]: 開頭）
+                    footnote_def_match = re.match(r'\[\^(\d+)\]:', content)
+                    if footnote_def_match:
+                        old_num = footnote_def_match.group(1)
+                        if old_num not in footnote_map:
+                            footnote_map[old_num] = str(current_number)
+                            current_number += 1
+            
+            # 第二步：替換所有 content_items 中的 footnote 引用和定義編號
+            for item in chapter_data.get('content_items', []):
+                if item.get('type') in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'caption']:
+                    content = item.get('content', '')
+                    
+                    # 替換所有 footnote 引用和定義
+                    # 注意：必須按照從大到小的順序替換，避免子串替換問題
+                    # 例如：先替換 [^10] 再替換 [^1]，否則 [^10] 會變成 [^新1]0
+                    sorted_old_nums = sorted(footnote_map.keys(), key=lambda x: int(x), reverse=True)
+                    
+                    for old_num in sorted_old_nums:
+                        new_num = footnote_map[old_num]
+                        # 替換引用：[^1] -> [^新編號]
+                        content = re.sub(rf'\[\^{old_num}\](?!:)', f'[^{new_num}]', content)
+                        # 替換定義：[^1]: -> [^新編號]:
+                        content = re.sub(rf'\[\^{old_num}\]:', f'[^{new_num}]:', content)
+                    
+                    item['content'] = content
+        
+        return current_number
 
     def _generate_chapter_hash(self, chapter_data: Dict[str, any]) -> str:
         """
@@ -2744,6 +2799,12 @@ class HyReadScraper:
                 # 為每個章節生成唯一錨點（加上索引避免重複）
                 anchor_id = f"{self._generate_anchor_id(chapter_name)}-{idx}"
                 chapter_map[chapter_name] = anchor_id
+
+        # 重新編號所有章節的 footnote（避免跨章節編號衝突）
+        logger.info("\n🔢 重新編號 footnote...")
+        footnote_count = self._renumber_footnotes(chapters_list)
+        if footnote_count > 1:
+            logger.info(f"   ✅ 已重新編號 {footnote_count - 1} 個 footnote")
 
         # 按順序轉換為 Markdown
         all_markdown = []
