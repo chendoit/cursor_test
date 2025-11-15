@@ -2642,13 +2642,29 @@ class HyReadScraper:
 
             found_new_content = False
 
-            # 按 iframe[0], iframe[1], iframe[2]... 的順序處理
+            # 並發處理所有 iframe（同時抓取，提高速度）
+            logger.info(f"   🚀 並發處理 {len(visible_iframes)} 個 iframe...")
+            
+            # 創建所有 iframe 的抓取任務
+            scrape_tasks = []
             for iframe_index, iframe in enumerate(visible_iframes):
-                logger.info(f"      📄 正在抓取 iframe[{iframe_index}]...")
-
-                # 抓取章節資料（傳遞 TOC 用於智能排序）
-                chapter_data = await self.scrape_chapter_from_iframe(iframe, base_url, toc_links)
-
+                task = self.scrape_chapter_from_iframe(iframe, base_url, toc_links)
+                scrape_tasks.append((iframe_index, task))
+            
+            # 並發執行所有任務
+            results = await asyncio.gather(*[task for _, task in scrape_tasks], return_exceptions=True)
+            
+            # 處理結果（按原始順序）
+            for (iframe_index, _), result in zip(scrape_tasks, results):
+                logger.info(f"      📄 處理 iframe[{iframe_index}] 結果...")
+                
+                # 檢查是否有異常
+                if isinstance(result, Exception):
+                    logger.warning(f"         ⚠️  iframe[{iframe_index}] 抓取失敗: {result}")
+                    continue
+                
+                chapter_data = result
+                
                 if not chapter_data:
                     logger.info(f"         ⚠️  iframe[{iframe_index}] 沒有內容")
                     continue
@@ -2736,36 +2752,46 @@ class HyReadScraper:
 
             # 根據設定選擇翻頁策略
             if self.smart_page_turn:
-                # 智能翻頁：根據本章剩餘頁數決定翻多少次（考慮 turn_page 可能一次翻2頁）
+                # 智能翻頁：根據本章剩餘頁數決定翻多少次
+                # 假設：每次翻頁實際移動 2 頁
+                # 策略：盡快跳到最後 2 頁，確保不遺漏內容
                 remaining_pages = progress['chapter_total'] - progress['chapter_current']
                 current_chapter_page = progress['chapter_current']
+                
+                PAGES_PER_TURN = 2  # 每次翻頁移動的頁數
+                TARGET_REMAINING = 2  # 目標剩餘頁數（保守策略）
 
                 if remaining_pages <= 0:
-                    # 章節結束，只翻 1 次到下一章
+                    # 章節結束，翻 1 次到下一章
                     turn_count = 1
                     logger.info(f"   ⏭️  章節已結束，翻 1 次到下一章...")
-                elif remaining_pages <= 5:
-                    # 接近章節尾部，只翻 1 次（避免跳過內容）
+                    
+                elif remaining_pages <= TARGET_REMAINING:
+                    # 剩餘 1-2 頁：翻 1 次（移動 2 頁，會到下一章）
                     turn_count = 1
-                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，謹慎翻 1 次（當前第 {current_chapter_page}/{progress['chapter_total']} 頁）...")
-                elif remaining_pages <= 10:
-                    # 章節中後段，翻 2 次
-                    turn_count = 2
-                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 2 次...")
-                elif remaining_pages > 15:
-                    # 章節前段，快速翻到接近末尾（保留最後 5 頁慢慢翻）
-                    # 計算需要翻幾次才能到剩餘 5 頁（假設每次翻 2 頁）
-                    target_remaining = 5
-                    pages_to_skip = remaining_pages - target_remaining
-                    # 保守估計：每次翻頁可能移動 1-2 頁，我們按 1.5 頁計算
-                    calculated_turns = max(1, int(pages_to_skip / 1.5))
-                    # 限制每次最多翻 10 次（避免一次跳太多）
-                    turn_count = min(calculated_turns, 15)
-                    logger.info(f"   🚀 本章剩餘 {remaining_pages} 頁，快速翻 {turn_count} 次（上限: 10 次）...")
+                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 1 次（每次約 {PAGES_PER_TURN} 頁）...")
+                    
+                elif remaining_pages <= 4:
+                    # 剩餘 3-4 頁：翻 1 次（移動 2 頁，到最後 1-2 頁）
+                    turn_count = 1
+                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 1 次（到最後 {remaining_pages - PAGES_PER_TURN} 頁）...")
+                    
                 else:
-                    # 章節中段（11-15頁），翻 3 次
-                    turn_count = 3
-                    logger.info(f"   ⏭️  本章剩餘 {remaining_pages} 頁，翻 {turn_count} 次...")
+                    # 剩餘 > 4 頁：快速跳到最後 2 頁
+                    pages_to_skip = remaining_pages - TARGET_REMAINING
+                    
+                    # 計算需要翻幾次（每次移動 2 頁，使用 ceil 向上取整）
+                    import math
+                    calculated_turns = math.ceil(pages_to_skip / PAGES_PER_TURN)
+                    
+                    # 限制每次最多翻 30 次（避免一次跳太多）
+                    # 30 次 × 2 頁 = 60 頁
+                    turn_count = min(calculated_turns, 30)
+                    
+                    estimated_pages = turn_count * PAGES_PER_TURN
+                    estimated_remaining = remaining_pages - estimated_pages
+                    logger.info(f"   🚀 本章剩餘 {remaining_pages} 頁，快速翻 {turn_count} 次（移動約 {estimated_pages} 頁，到最後 {estimated_remaining} 頁）...")
+                    
             else:
                 # 固定翻頁：每次翻固定次數
                 turn_count = self.pages_per_turn
