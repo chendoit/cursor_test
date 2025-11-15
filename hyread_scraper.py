@@ -1460,7 +1460,7 @@ class HyReadScraper:
                             break
                         
                         if attempt < 5:
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(0.2)
                     
                     if not canvas_ready:
                         logger.info(f"         ⚠️  Canvas[{i}] 可能為空或未渲染完成")
@@ -2760,7 +2760,7 @@ class HyReadScraper:
                     # 保守估計：每次翻頁可能移動 1-2 頁，我們按 1.5 頁計算
                     calculated_turns = max(1, int(pages_to_skip / 1.5))
                     # 限制每次最多翻 10 次（避免一次跳太多）
-                    turn_count = min(calculated_turns, 10)
+                    turn_count = min(calculated_turns, 15)
                     logger.info(f"   🚀 本章剩餘 {remaining_pages} 頁，快速翻 {turn_count} 次（上限: 10 次）...")
                 else:
                     # 章節中段（11-15頁），翻 3 次
