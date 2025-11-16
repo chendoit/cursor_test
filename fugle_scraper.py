@@ -348,6 +348,38 @@ class FugleScraper:
                         background-color: white;
                         border-radius: 4px;
                         line-height: 1.8;
+                        font-size: 14px;  /* 默認正常字體 */
+                    }}
+                    /* 設定所有內容的默認顏色為黑色 */
+                    .content,
+                    .content p,
+                    .content span:not([style*="color"]),
+                    .content strong {{
+                        color: #333 !important;
+                    }}
+                    /* 重置所有 span 為正常字體大小 */
+                    .content span {{
+                        font-size: 1em !important;
+                    }}
+                    /* 次標題（strong 內的 span）放大字體 */
+                    .content strong > span,
+                    .content strong span {{
+                        font-size: 1.15em !important;
+                    }}
+                    /* 段落樣式 */
+                    .content p {{
+                        margin: 0.8em 0;
+                    }}
+                    /* 保留內聯樣式中明確指定的顏色 */
+                    .content span[style*="color"] {{
+                        /* 內聯顏色樣式保持不變 */
+                    }}
+                    /* Emoji 圖片樣式 */
+                    .content img.emoji {{
+                        display: inline-block;
+                        width: 1.2em;
+                        height: 1.2em;
+                        vertical-align: middle;
                     }}
                     .footer {{
                         margin-top: 30px;
