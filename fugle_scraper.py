@@ -40,35 +40,99 @@ logger.add(
 )
 
 
+def get_config(key: str, default: str = "", env_file: str = ".env_fugle") -> str:
+    """
+    獲取配置，支援多種來源
+    
+    優先順序：
+    1. Kaggle Secrets (kaggle_secrets.UserSecretsClient)
+    2. 環境變數（GitHub Actions, 本地環境變數）
+    3. .env 文件（本地開發）
+    
+    Args:
+        key: 配置鍵名
+        default: 默認值
+        env_file: .env 文件路徑
+        
+    Returns:
+        配置值
+    """
+    # 1. 優先嘗試從 Kaggle Secrets 讀取（Kaggle 官方方式）
+    try:
+        from kaggle_secrets import UserSecretsClient
+        user_secrets = UserSecretsClient()
+        value = user_secrets.get_secret(key)
+        if value:
+            return value
+    except (ImportError, Exception):
+        # kaggle_secrets 不可用或 Secret 不存在，繼續嘗試其他方式
+        pass
+    
+    # 2. 從環境變數讀取（適用於 GitHub Actions 等）
+    value = os.getenv(key)
+    if value:
+        return value
+    
+    # 3. 從 .env 文件讀取（本地開發）
+    env_path = Path(env_file)
+    if env_path.exists():
+        load_dotenv(env_path)
+        value = os.getenv(key, default)
+        return value
+    
+    return default
+
+
 class FugleScraper:
-    """Fugle 部落格文章監控爬蟲"""
+    """Fugle 部落格文章監控爬蟲（支援本地和 Kaggle 環境）"""
 
     def __init__(self, env_file: str = ".env_fugle"):
         """
         初始化爬蟲
 
         Args:
-            env_file: 環境變數檔案路徑
+            env_file: 環境變數檔案路徑（僅用於本地環境）
         """
-        # 載入環境變數
-        env_path = Path(env_file)
-        if not env_path.exists():
-            raise FileNotFoundError(f"找不到環境變數檔案: {env_file}")
-
-        load_dotenv(env_path)
-
-        # 讀取設定
-        self.target_url = os.getenv("TARGET_URL", "https://blog.fugle.tw/captains-newsletter-2024/")
-        self.mongodb_url = os.getenv("MONGODB_URL")
-        self.mail_token = os.getenv("MAIL_TOKEN")
-        self.app_password = os.getenv("APP_PASSWORD")
-        self.recipients = os.getenv("RECIPIENTS", "").split(",")
-        self.recipients = [r.strip() for r in self.recipients if r.strip()]
-        self.test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
+        # 檢測運行環境
+        self.is_kaggle = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ
+        self.env_file = env_file
+        
+        logger.info(f"🌍 運行環境: {'Kaggle' if self.is_kaggle else 'Local'}")
+        
+        # 讀取設定（自動適配 Kaggle Secrets 或本地 .env）
+        self.target_url = get_config("TARGET_URL", "https://blog.fugle.tw/captains-newsletter-2024/", env_file)
+        self.mongodb_url = get_config("MONGODB_URL", "", env_file)
+        self.mail_token = get_config("MAIL_TOKEN", "", env_file)
+        self.app_password = get_config("APP_PASSWORD", "", env_file)
+        recipients_str = get_config("RECIPIENTS", "", env_file)
+        self.recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
+        self.test_mode = get_config("TEST_MODE", "false", env_file).lower() == "true"
 
         # 驗證必要參數
-        if not all([self.mongodb_url, self.mail_token, self.app_password, self.recipients]):
-            raise ValueError("請確保 .env_fugle 中包含所有必要參數")
+        missing_params = []
+        if not self.mongodb_url:
+            missing_params.append("MONGODB_URL")
+        if not self.mail_token:
+            missing_params.append("MAIL_TOKEN")
+        if not self.app_password:
+            missing_params.append("APP_PASSWORD")
+        if not self.recipients:
+            missing_params.append("RECIPIENTS")
+        
+        if missing_params:
+            error_msg = f"❌ 缺少必要參數: {', '.join(missing_params)}"
+            logger.error(error_msg)
+            
+            if self.is_kaggle:
+                logger.error("請在 Kaggle Notebook 右側 'Add-ons' → 'Secrets' 中設定以下參數：")
+                for param in missing_params:
+                    logger.error(f"  - {param}")
+            else:
+                logger.error(f"請在 {env_file} 中設定以下參數：")
+                for param in missing_params:
+                    logger.error(f"  - {param}")
+            
+            raise ValueError(error_msg)
 
         # MongoDB 連接
         self.mongo_client = MongoClient(self.mongodb_url)
@@ -90,6 +154,12 @@ class FugleScraper:
         Returns:
             包含 title, content, title_hash, content_hash 的字典，失敗則返回 None
         """
+        # Kaggle 環境下需要安裝 Playwright 瀏覽器
+        if self.is_kaggle:
+            logger.info("🔧 Kaggle 環境：安裝 Playwright 瀏覽器...")
+            os.system("playwright install chromium")
+            os.system("playwright install-deps chromium")
+        
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
@@ -111,26 +181,36 @@ class FugleScraper:
                 if not content_element:
                     logger.error("❌ 找不到內容元素")
                     return None
-                content = await content_element.inner_text()
-                content = content.strip()
+                
+                # 獲取 HTML 內容（保留格式）
+                content_html = await content_element.inner_html()
+                
+                # 也獲取純文字內容用於 hash 計算
+                content_text = await content_element.inner_text()
+                content_text = content_text.strip()
                 
                 # 截斷到"立即註冊會員閱讀全文"之前
                 cutoff_text = "立即註冊會員閱讀全文"
-                if cutoff_text in content:
-                    content = content.split(cutoff_text)[0].strip()
+                if cutoff_text in content_text:
+                    content_text = content_text.split(cutoff_text)[0].strip()
                     logger.info("✂️  已截斷內容到註冊提示之前")
+                    
+                    # 同時截斷 HTML 內容
+                    if cutoff_text in content_html:
+                        content_html = content_html.split(cutoff_text)[0].strip()
 
-                # 計算 hash
+                # 計算 hash（使用純文字）
                 title_hash = self.calculate_hash(title)
-                content_hash = self.calculate_hash(content)
+                content_hash = self.calculate_hash(content_text)
 
                 logger.info(f"✅ 成功抓取文章")
                 logger.info(f"📝 標題: {title[:300]}...")
-                logger.info(f"📄 內容長度: {len(content)} 字元")
+                logger.info(f"📄 內容長度: {len(content_text)} 字元")
 
                 return {
                     "title": title,
-                    "content": content,
+                    "content": content_text,  # 純文字用於顯示和 hash
+                    "content_html": content_html,  # HTML 用於郵件格式
                     "title_hash": title_hash,
                     "content_hash": content_hash,
                     "url": self.target_url,
@@ -280,15 +360,20 @@ class FugleScraper:
                     .button {{
                         display: inline-block;
                         background-color: #0066cc;
-                        color: white;
-                        padding: 12px 30px;
+                        color: white !important;
+                        padding: 15px 40px;
                         text-decoration: none;
                         border-radius: 5px;
-                        margin-top: 15px;
+                        margin-top: 20px;
                         font-weight: bold;
+                        font-size: 16px;
+                        border: 2px solid #0066cc;
+                        box-shadow: 0 2px 8px rgba(0,102,204,0.3);
                     }}
                     .button:hover {{
                         background-color: #0052a3;
+                        border-color: #0052a3;
+                        box-shadow: 0 4px 12px rgba(0,102,204,0.5);
                     }}
                 </style>
             </head>
@@ -310,7 +395,7 @@ class FugleScraper:
                     
                     <div class="section">
                         <h2>📄 文章完整內容</h2>
-                        <div class="content">{article['content']}</div>
+                        <div class="content">{article['content_html']}</div>
                     </div>
                     
                     <div style="text-align: center;">
@@ -444,12 +529,32 @@ async def main():
         await scraper.run()
     except Exception as e:
         logger.error(f"❌ 執行失敗: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
     finally:
         if scraper:
             scraper.close()
 
 
+def is_notebook() -> bool:
+    """檢測是否在 Jupyter/IPython 環境中運行"""
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            return True
+    except ImportError:
+        pass
+    return False
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    if is_notebook():
+        # Jupyter/Kaggle Notebook 環境：直接使用 await
+        import nest_asyncio
+        nest_asyncio.apply()
+        asyncio.run(main())
+    else:
+        # 命令行環境：使用 asyncio.run()
+        asyncio.run(main())
 
