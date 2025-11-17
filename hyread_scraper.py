@@ -347,6 +347,7 @@ class HyReadScraper:
             logger.warning(f"⚠️  無法提取書名: {e}")
             self.book_title = f"book_{book_id}"
 
+        await asyncio.sleep(0.3)
         # 檢查線上閱讀按鈕
         try:
             # 方案1: 定位線上閱讀按鈕（未借閱的情況）
@@ -1659,6 +1660,25 @@ class HyReadScraper:
             logger.info(f"         ⚠️  從 iframe 抓取內容時發生錯誤: {e}")
             return {'headings': [], 'paragraphs': [], 'images': []}
 
+    def get_image_relative_path(self, filename: str) -> str:
+        """
+        生成圖片的相對路徑（相對於輸出資料夾）
+        
+        Args:
+            filename: 圖片檔案名
+            
+        Returns:
+            相對路徑字串
+        """
+        if self.book_title:
+            # 移除檔案名中不允許的字元
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', self.book_title)
+            folder_name = f"book_{safe_title}"
+        else:
+            folder_name = f"book_{self.book_id}"
+        
+        return f"{folder_name}/{filename}"
+
     async def download_image(self, url: str, page_number: int, base_url: str = None) -> str:
         """
         下載圖片到本地
@@ -1697,8 +1717,8 @@ class HyReadScraper:
                     with open(local_path, 'wb') as f:
                         f.write(base64.b64decode(img_data))
                     
-                    # 記錄下載
-                    relative_path = f"images/book_{self.book_id}/{filename}"
+                    # 記錄下載（使用統一的相對路徑生成方法）
+                    relative_path = self.get_image_relative_path(filename)
                     self.downloaded_images[url] = relative_path
                     
                     logger.info(f"      🎨 已保存 Canvas 圖片: {filename}")
@@ -1734,8 +1754,8 @@ class HyReadScraper:
                 with open(local_path, 'wb') as f:
                     f.write(response.content)
 
-            # 記錄下載（相對於 downloads 目錄的路徑）
-            relative_path = f"images/book_{self.book_id}/{filename}"
+            # 記錄下載（使用統一的相對路徑生成方法）
+            relative_path = self.get_image_relative_path(filename)
             self.downloaded_images[url] = relative_path
 
             logger.info(f"      📥 已下載圖片: {filename}")
@@ -2328,7 +2348,8 @@ class HyReadScraper:
                         with open(local_path_full, 'wb') as f:
                             f.write(base64.b64decode(img_data))
                         
-                        relative_path = f"images/book_{self.book_id}/{filename}"
+                        # 使用統一的相對路徑生成方法
+                        relative_path = self.get_image_relative_path(filename)
                         
                         canvas_images.append({
                             'page': page_number,
