@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 import sys
+import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict
@@ -47,12 +48,13 @@ logger.add(
 class HyReadScraper:
     """桃園市立圖書館 HyRead 電子書自動借閱類別"""
 
-    def __init__(self, env_file: str = ".env_hyread"):
+    def __init__(self, env_file: str = ".env_hyread", args_override: dict = None):
         """
         初始化借閱器
 
         Args:
             env_file: 環境變數檔案路徑
+            args_override: 命令列參數覆寫字典 (可選)
         """
         # 載入環境變數
         env_path = Path(env_file)
@@ -61,30 +63,37 @@ class HyReadScraper:
 
         load_dotenv(env_path)
 
-        # 讀取設定
+        # 讀取設定（優先使用命令列參數，否則使用環境變數）
+        args_override = args_override or {}
+        
         self.account = os.getenv("HYREAD_ACCOUNT")
         self.password = os.getenv("HYREAD_PASSWORD")
         self.google_api_key = os.getenv("OPENAI_API_KEY")
         self.model_name = os.getenv("OPENAI_MODEL", "gemini-2.0-flash-exp")
-        self.book_id = os.getenv("HYREAD_BOOK_ID", "279235")  # 預設書籍 ID
-        self.captcha_mode = os.getenv("CAPTCHA_MODE", "manual").lower()  # 驗證碼模式
-        self.enable_scraping = os.getenv("ENABLE_SCRAPING", "true").lower() == "true"  # 是否啟用爬蟲
-        self.max_pages = int(os.getenv("MAX_PAGES", "999"))  # 最大爬取頁數
-        self.download_images = os.getenv("DOWNLOAD_IMAGES", "true").lower() == "true"  # 是否下載圖片
-        self.image_only_mode = os.getenv("IMAGE_ONLY_MODE", "false").lower() == "true"  # 純圖片書籍模式
         
-        # 翻頁策略相關
-        self.smart_page_turn = os.getenv("SMART_PAGE_TURN", "true").lower() == "true"  # 是否啟用智能翻頁
-        self.pages_per_turn = int(os.getenv("PAGES_PER_TURN", "3"))  # 固定翻頁數量（當智能翻頁關閉時）
+        # 可被命令列參數覆寫的設定
+        self.book_id = args_override.get("book_id") or os.getenv("HYREAD_BOOK_ID", "279235")
+        self.max_pages = args_override.get("max_pages") or int(os.getenv("MAX_PAGES", "999"))
+        self.image_only_mode = args_override.get("image_only_mode") if args_override.get("image_only_mode") is not None else (os.getenv("IMAGE_ONLY_MODE", "false").lower() == "true")
+        self.output_folder = args_override.get("output_folder") or os.getenv("OUTPUT_FOLDER", "downloads")
         
-        # 翻頁按鍵設定
-        page_turn_key = os.getenv("PAGE_TURN_KEY", "ArrowRight")
+        # 翻頁按鍵設定（可被命令列參數覆寫）
+        page_turn_key = args_override.get("page_turn_key") or os.getenv("PAGE_TURN_KEY", "ArrowRight")
         # 驗證按鍵值是否有效
         valid_keys = ["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"]
         if page_turn_key not in valid_keys:
             logger.warning(f"⚠️  無效的翻頁按鍵: {page_turn_key}，使用預設值 ArrowRight")
             page_turn_key = "ArrowRight"
         self.page_turn_key = page_turn_key
+        
+        # 其他設定（不可被命令列參數覆寫）
+        self.captcha_mode = os.getenv("CAPTCHA_MODE", "manual").lower()  # 驗證碼模式
+        self.enable_scraping = os.getenv("ENABLE_SCRAPING", "true").lower() == "true"  # 是否啟用爬蟲
+        self.download_images = os.getenv("DOWNLOAD_IMAGES", "true").lower() == "true"  # 是否下載圖片
+        
+        # 翻頁策略相關
+        self.smart_page_turn = os.getenv("SMART_PAGE_TURN", "true").lower() == "true"  # 是否啟用智能翻頁
+        self.pages_per_turn = int(os.getenv("PAGES_PER_TURN", "3"))  # 固定翻頁數量（當智能翻頁關閉時）
 
         # 圖片下載相關
         self.images_dir = None
@@ -123,6 +132,7 @@ class HyReadScraper:
         if self.captcha_mode == "auto":
             logger.info(f"   - Gemini 模型: {self.model_name}")
         logger.info(f"   - 目標書籍 ID: {self.book_id}")
+        logger.info(f"   - 輸出資料夾: {self.output_folder}")
         logger.info(f"   - 爬蟲模式: {'啟用' if self.enable_scraping else '停用'}")
         if self.enable_scraping:
             logger.info(f"   - 最大爬取頁數: {self.max_pages}")
@@ -2353,8 +2363,15 @@ class HyReadScraper:
         logger.info("📚 開始爬取純圖片書籍（Canvas Only 模式）")
         logger.info("=" * 60)
         
-        # 建立圖片目錄
-        self.images_dir = Path("downloads") / "images" / f"book_{self.book_id}"
+        # 建立圖片目錄（使用書名或書籍 ID）
+        if self.book_title:
+            # 移除檔案名中不允許的字元
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', self.book_title)
+            folder_name = f"book_{safe_title}"
+        else:
+            folder_name = f"book_{self.book_id}"
+        
+        self.images_dir = Path(self.output_folder) / folder_name
         self.images_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 圖片將保存到: {self.images_dir}")
 
@@ -2587,9 +2604,16 @@ class HyReadScraper:
         logger.info("📚 開始爬取書籍內容（按 iframe 順序）")
         logger.info("=" * 60)
 
-        # 如果需要下載圖片，建立圖片目錄
+        # 如果需要下載圖片，建立圖片目錄（使用書名或書籍 ID）
         if self.download_images:
-            self.images_dir = Path("downloads") / "images" / f"book_{self.book_id}"
+            if self.book_title:
+                # 移除檔案名中不允許的字元
+                safe_title = re.sub(r'[<>:"/\\|?*]', '_', self.book_title)
+                folder_name = f"book_{safe_title}"
+            else:
+                folder_name = f"book_{self.book_id}"
+            
+            self.images_dir = Path(self.output_folder) / folder_name
             self.images_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"📁 圖片將保存到: {self.images_dir}")
 
@@ -2930,7 +2954,7 @@ class HyReadScraper:
                         markdown_content = await self.scrape_entire_book(reading_page)
 
                     # 儲存為檔案
-                    output_dir = Path("downloads")
+                    output_dir = Path(self.output_folder)
                     output_dir.mkdir(exist_ok=True)
 
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -2997,8 +3021,84 @@ async def main():
     """)
 
     try:
-        # 初始化借閱器
-        scraper = HyReadScraper(env_file=".env_hyread")
+        # 解析命令列參數
+        parser = argparse.ArgumentParser(
+            description='HyRead 電子書自動借閱與下載工具',
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog='''
+使用範例:
+  # 使用 .env_hyread 的所有設定
+  python hyread_scraper.py
+  
+  # 覆寫書籍 ID
+  python hyread_scraper.py --book-id 123456
+  
+  # 覆寫多個設定
+  python hyread_scraper.py --book-id 123456 --max-pages 500 --output-folder my_books
+  
+  # 啟用純圖片模式
+  python hyread_scraper.py --book-id 123456 --image-only
+  
+  # 更改翻頁按鍵
+  python hyread_scraper.py --page-turn-key ArrowLeft
+            '''
+        )
+        
+        parser.add_argument(
+            '--book-id', '-b',
+            type=str,
+            help='書籍 ID（覆寫 .env_hyread 中的 HYREAD_BOOK_ID）'
+        )
+        
+        parser.add_argument(
+            '--max-pages', '-m',
+            type=int,
+            help='最大爬取頁數（覆寫 .env_hyread 中的 MAX_PAGES）'
+        )
+        
+        parser.add_argument(
+            '--image-only',
+            action='store_true',
+            help='啟用純圖片模式（覆寫 .env_hyread 中的 IMAGE_ONLY_MODE=true）'
+        )
+        
+        parser.add_argument(
+            '--page-turn-key', '-k',
+            type=str,
+            choices=['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'],
+            help='翻頁按鍵（覆寫 .env_hyread 中的 PAGE_TURN_KEY）'
+        )
+        
+        parser.add_argument(
+            '--output-folder', '-o',
+            type=str,
+            help='輸出資料夾路徑（覆寫 .env_hyread 中的 OUTPUT_FOLDER）'
+        )
+        
+        args = parser.parse_args()
+        
+        # 建立參數覆寫字典（只包含使用者指定的參數）
+        args_override = {}
+        if args.book_id:
+            args_override['book_id'] = args.book_id
+        if args.max_pages:
+            args_override['max_pages'] = args.max_pages
+        if args.image_only:
+            args_override['image_only_mode'] = True
+        if args.page_turn_key:
+            args_override['page_turn_key'] = args.page_turn_key
+        if args.output_folder:
+            args_override['output_folder'] = args.output_folder
+        
+        # 顯示命令列參數覆寫資訊
+        if args_override:
+            logger.info("\n📝 命令列參數覆寫:")
+            for key, value in args_override.items():
+                logger.info(f"   - {key}: {value}")
+            logger.info("")
+
+        # 初始化借閱器（傳入參數覆寫）
+        scraper = HyReadScraper(env_file=".env_hyread", args_override=args_override)
 
         # 執行借閱流程
         # headless=False: 顯示瀏覽器視窗（方便觀察）
