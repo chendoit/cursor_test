@@ -2450,7 +2450,6 @@ class HyReadScraper:
                 blob_url = img_info['src']
                 
                 try:
-                    # 方法 1: 嘗試直接截取 img 元素的截圖（最可靠）
                     # 找到對應的元素
                     if self.blob_image_size == "small":
                         img_selector = f'div.render img[src="{blob_url}"]'
@@ -2461,46 +2460,124 @@ class HyReadScraper:
                     element_count = await img_locator.count()
                     
                     data_url = None
+                    method_used = None
                     
-                    if element_count > 0:
-                        # 直接截取元素截圖
+                    # 方法 1: 使用 CDP (Chrome DevTools Protocol) 獲取 blob 資源
+                    try:
+                        client = await page.context.new_cdp_session(page)
+                        
+                        # 關鍵步驟：啟用 Page 網域代理
+                        await client.send('Page.enable')
+                        
+                        tree = await client.send('Page.getResourceTree')
+                        
+                        # 遞迴尋找哪個 frame 包含該 blob_url
+                        def find_frame_id(frame_tree, target_url):
+                            frame = frame_tree['frame']
+                            # 檢查該 frame 的資源
+                            resources = frame_tree.get('resources', [])
+                            for res in resources:
+                                if res.get('url') == target_url:
+                                    return frame['id']
+                            # 檢查子 frame
+                            for child in frame_tree.get('childFrames', []):
+                                res_id = find_frame_id(child, target_url)
+                                if res_id:
+                                    return res_id
+                            return None
+                        
+                        correct_frame_id = find_frame_id(tree['frameTree'], blob_url)
+                        
+                        if correct_frame_id:
+                            resource = await client.send('Page.getResourceContent', {
+                                'frameId': correct_frame_id,
+                                'url': blob_url
+                            })
+                            
+                            if resource.get('base64Encoded') and resource.get('content'):
+                                data_url = f"data:image/png;base64,{resource['content']}"
+                                method_used = "CDP"
+                        
+                        await client.detach()
+                    except Exception as cdp_err:
+                        logger.debug(f"         ⚠️  圖片 {i} CDP 獲取失敗: {cdp_err}")
+                    
+                    # 方法 2: 使用 Canvas 繪製 img 元素（繞過 blob 跨域限制）
+                    if not data_url and element_count > 0 and self.blob_image_size == "small":
+                        try:
+                            data_url = await img_locator.first.evaluate('''
+                                (img) => {
+                                    try {
+                                        // 等待圖片載入完成
+                                        if (!img.complete || img.naturalWidth === 0) {
+                                            return null;
+                                        }
+                                        
+                                        // 創建 canvas 並繪製圖片
+                                        const canvas = document.createElement('canvas');
+                                        canvas.width = img.naturalWidth;
+                                        canvas.height = img.naturalHeight;
+                                        
+                                        const ctx = canvas.getContext('2d');
+                                        ctx.drawImage(img, 0, 0);
+                                        
+                                        // 導出為 data URL
+                                        return canvas.toDataURL('image/png');
+                                    } catch (e) {
+                                        console.error('Canvas draw error:', e);
+                                        return null;
+                                    }
+                                }
+                            ''')
+                            if data_url and data_url.startswith('data:image'):
+                                method_used = "Canvas繪製"
+                        except Exception as canvas_err:
+                            logger.debug(f"         ⚠️  圖片 {i} Canvas 繪製失敗: {canvas_err}")
+                    
+                    # 方法 3: fetch blob URL
+                    if not data_url:
+                        try:
+                            data_url = await page.evaluate('''
+                                async (blobUrl) => {
+                                    try {
+                                        const response = await fetch(blobUrl);
+                                        const blob = await response.blob();
+                                        return new Promise((resolve, reject) => {
+                                            const reader = new FileReader();
+                                            reader.onloadend = () => resolve(reader.result);
+                                            reader.onerror = reject;
+                                            reader.readAsDataURL(blob);
+                                        });
+                                    } catch (e) {
+                                        console.error('Blob fetch error:', e);
+                                        return null;
+                                    }
+                                }
+                            ''', blob_url)
+                            if data_url and data_url.startswith('data:image'):
+                                method_used = "Blob Fetch"
+                        except Exception as fetch_err:
+                            logger.debug(f"         ⚠️  圖片 {i} Blob fetch 失敗: {fetch_err}")
+                    
+                    # 方法 4: 直接截取元素截圖（最後備用）
+                    if not data_url and element_count > 0:
                         try:
                             screenshot_bytes = await img_locator.first.screenshot(type='png')
                             
                             if screenshot_bytes and len(screenshot_bytes) > 1000:
-                                # 轉換為 base64 data URL
                                 import base64
                                 img_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
                                 data_url = f"data:image/png;base64,{img_base64}"
-                                logger.debug(f"         📸 使用截圖方式獲取圖片 {i}")
-                            else:
-                                logger.info(f"         ⚠️  圖片 {i} 截圖過小")
+                                method_used = "截圖"
                         except Exception as screenshot_err:
-                            logger.info(f"         ⚠️  圖片 {i} 截圖失敗: {screenshot_err}")
-                    
-                    # 方法 2: 如果截圖失敗，嘗試 fetch blob URL（備用）
-                    if not data_url:
-                        data_url = await page.evaluate('''
-                            async (blobUrl) => {
-                                try {
-                                    const response = await fetch(blobUrl);
-                                    const blob = await response.blob();
-                                    return new Promise((resolve, reject) => {
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => resolve(reader.result);
-                                        reader.onerror = reject;
-                                        reader.readAsDataURL(blob);
-                                    });
-                                } catch (e) {
-                                    console.error('Blob fetch error:', e);
-                                    return null;
-                                }
-                            }
-                        ''', blob_url)
+                            logger.debug(f"         ⚠️  圖片 {i} 截圖失敗: {screenshot_err}")
                     
                     if not data_url or not data_url.startswith('data:image'):
                         logger.info(f"         ⚠️  圖片 {i} 所有方法都失敗，URL: {blob_url[:60]}...")
                         continue
+                    
+                    if method_used:
+                        logger.debug(f"         📸 圖片 {i} 使用 {method_used} 方式獲取")
                     
                     # 檢查大小（排除過小的圖片）
                     data_size = len(data_url)
