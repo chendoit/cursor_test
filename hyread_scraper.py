@@ -69,7 +69,7 @@ class HyReadScraper:
         self.account = os.getenv("HYREAD_ACCOUNT")
         self.password = os.getenv("HYREAD_PASSWORD")
         self.google_api_key = os.getenv("OPENAI_API_KEY")
-        self.model_name = os.getenv("OPENAI_MODEL", "gemini-2.0-flash-exp")
+        self.model_name = os.getenv("OPENAI_MODEL", "gemini-2.5-flash")
         
         # 可被命令列參數覆寫的設定
         self.book_id = args_override.get("book_id") or os.getenv("HYREAD_BOOK_ID", "279235")
@@ -94,6 +94,13 @@ class HyReadScraper:
         # 翻頁策略相關
         self.smart_page_turn = os.getenv("SMART_PAGE_TURN", "true").lower() == "true"  # 是否啟用智能翻頁
         self.pages_per_turn = int(os.getenv("PAGES_PER_TURN", "3"))  # 固定翻頁數量（當智能翻頁關閉時）
+
+        # Blob 圖片設定（純圖片模式專用）
+        blob_size = os.getenv("BLOB_IMAGE_SIZE", "small").lower()
+        if blob_size not in ["small", "large"]:
+            logger.warning(f"⚠️  無效的 BLOB_IMAGE_SIZE: {blob_size}，使用預設值 small")
+            blob_size = "small"
+        self.blob_image_size = blob_size  # small=下載小圖, large=下載大圖
 
         # 圖片下載相關
         self.images_dir = None
@@ -137,7 +144,9 @@ class HyReadScraper:
         if self.enable_scraping:
             logger.info(f"   - 最大爬取頁數: {self.max_pages}")
             logger.info(f"   - 下載圖片: {'是' if self.download_images else '否'}")
-            logger.info(f"   - 純圖片書籍模式: {'是 (Canvas Only)' if self.image_only_mode else '否 (HTML + Canvas)'}")
+            logger.info(f"   - 純圖片書籍模式: {'是 (Blob Image)' if self.image_only_mode else '否 (HTML + Canvas)'}")
+            if self.image_only_mode:
+                logger.info(f"   - Blob 圖片尺寸: {'小圖' if self.blob_image_size == 'small' else '大圖'}")
             logger.info(f"   - 翻頁策略: {'智能翻頁' if self.smart_page_turn else f'固定翻頁（每次 {self.pages_per_turn} 頁）'}")
             
             # 顯示翻頁按鍵（加上友善的中文說明）
@@ -2370,9 +2379,189 @@ class HyReadScraper:
         
         return canvas_images
 
+    async def scrape_blob_images_from_page(self, page: Page, page_number: int) -> list:
+        """
+        從頁面抓取 blob 圖片（純圖片書籍專用）
+        
+        這種書籍的圖片結構：
+        - 在 div.render 容器下
+        - 通過 transform: translateX(0%) 判斷當前顯示的頁面容器
+        - 每頁有兩個圖片來源：<img> 標籤（小圖）和 <div src="...">（大圖）
+
+        Args:
+            page: Playwright 頁面物件
+            page_number: 頁碼
+
+        Returns:
+            圖片資訊列表
+        """
+        blob_images = []
+        
+        try:
+            # 方法：使用 JavaScript 找到 transform: translateX(0%) 的當前頁面容器
+            # 這比用 aria-hidden 更可靠
+            current_container_images = await page.evaluate('''
+                (imageSize) => {
+                    const results = [];
+                    
+                    // 找到 render 容器
+                    const renderDiv = document.querySelector('div.render');
+                    if (!renderDiv) return results;
+                    
+                    // 找到所有直接子容器
+                    const containers = renderDiv.querySelectorAll(':scope > div');
+                    
+                    for (const container of containers) {
+                        const style = container.style;
+                        const transform = style.transform || '';
+                        
+                        // 檢查是否為當前顯示的容器 (translateX(0%))
+                        if (transform.includes('translateX(0%)') || transform === '') {
+                            // 根據 imageSize 選擇要抓取的元素
+                            let selector = imageSize === 'small' ? 'img[src^="blob:"]' : 'div[src^="blob:"]';
+                            const elements = container.querySelectorAll(selector);
+                            
+                            elements.forEach((el, index) => {
+                                const src = el.getAttribute('src');
+                                if (src && src.startsWith('blob:')) {
+                                    results.push({
+                                        src: src,
+                                        index: index
+                                    });
+                                }
+                            });
+                            
+                            // 只處理第一個匹配的容器
+                            if (results.length > 0) break;
+                        }
+                    }
+                    
+                    return results;
+                }
+            ''', self.blob_image_size)
+            
+            if not current_container_images:
+                logger.info(f"         ⚠️  未找到當前頁面的 blob 圖片")
+                return blob_images
+            
+            logger.info(f"         🔍 找到 {len(current_container_images)} 張 blob 圖片")
+            
+            for i, img_info in enumerate(current_container_images):
+                blob_url = img_info['src']
+                
+                try:
+                    # 方法 1: 嘗試直接截取 img 元素的截圖（最可靠）
+                    # 找到對應的元素
+                    if self.blob_image_size == "small":
+                        img_selector = f'div.render img[src="{blob_url}"]'
+                    else:
+                        img_selector = f'div.render div[src="{blob_url}"]'
+                    
+                    img_locator = page.locator(img_selector)
+                    element_count = await img_locator.count()
+                    
+                    data_url = None
+                    
+                    if element_count > 0:
+                        # 直接截取元素截圖
+                        try:
+                            screenshot_bytes = await img_locator.first.screenshot(type='png')
+                            
+                            if screenshot_bytes and len(screenshot_bytes) > 1000:
+                                # 轉換為 base64 data URL
+                                import base64
+                                img_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                                data_url = f"data:image/png;base64,{img_base64}"
+                                logger.debug(f"         📸 使用截圖方式獲取圖片 {i}")
+                            else:
+                                logger.info(f"         ⚠️  圖片 {i} 截圖過小")
+                        except Exception as screenshot_err:
+                            logger.info(f"         ⚠️  圖片 {i} 截圖失敗: {screenshot_err}")
+                    
+                    # 方法 2: 如果截圖失敗，嘗試 fetch blob URL（備用）
+                    if not data_url:
+                        data_url = await page.evaluate('''
+                            async (blobUrl) => {
+                                try {
+                                    const response = await fetch(blobUrl);
+                                    const blob = await response.blob();
+                                    return new Promise((resolve, reject) => {
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => resolve(reader.result);
+                                        reader.onerror = reject;
+                                        reader.readAsDataURL(blob);
+                                    });
+                                } catch (e) {
+                                    console.error('Blob fetch error:', e);
+                                    return null;
+                                }
+                            }
+                        ''', blob_url)
+                    
+                    if not data_url or not data_url.startswith('data:image'):
+                        logger.info(f"         ⚠️  圖片 {i} 所有方法都失敗，URL: {blob_url[:60]}...")
+                        continue
+                    
+                    # 檢查大小（排除過小的圖片）
+                    data_size = len(data_url)
+                    if data_size <= 5000:
+                        logger.info(f"         ⚠️  圖片 {i} 過小 ({data_size} bytes)，跳過")
+                        continue
+                    
+                    # 計算 MD5 hash 用於去重
+                    img_hash = hashlib.md5(data_url.encode()).hexdigest()
+                    
+                    # 檢查是否重複
+                    if img_hash in self.canvas_hashes:
+                        logger.info(f"         🔄 圖片 {i} 重複（MD5: {img_hash[:8]}...），已跳過")
+                        continue
+                    
+                    # 記錄 hash
+                    self.canvas_hashes.add(img_hash)
+                    
+                    # 解析並保存圖片
+                    import base64
+                    match = re.match(r'data:image/(\w+);base64,(.+)', data_url)
+                    if match:
+                        img_format = match.group(1)
+                        img_data = match.group(2)
+                        
+                        # 生成檔案名
+                        filename = f"page_{page_number:04d}_{i}_{img_hash[:12]}.{img_format}"
+                        local_path_full = self.images_dir / filename
+                        
+                        # 解碼並保存
+                        with open(local_path_full, 'wb') as f:
+                            f.write(base64.b64decode(img_data))
+                        
+                        # 使用統一的相對路徑生成方法
+                        relative_path = self.get_image_relative_path(filename)
+                        
+                        blob_images.append({
+                            'page': page_number,
+                            'index': i,
+                            'path': relative_path,
+                            'size': data_size,
+                            'hash': img_hash
+                        })
+                        
+                        size_label = "小圖" if self.blob_image_size == "small" else "大圖"
+                        logger.info(f"         ✅ {size_label} {i} 已保存: {filename} ({data_size / 1024:.1f} KB)")
+                    
+                except Exception as e:
+                    logger.info(f"         ⚠️  圖片 {i} 處理失敗: {e}")
+                    continue
+        
+        except Exception as e:
+            logger.info(f"         ⚠️  掃描 blob 圖片失敗: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return blob_images
+
     async def scrape_image_only_book(self, reading_page: Page) -> str:
         """
-        爬取純圖片書籍（所有頁面都是 Canvas）
+        爬取純圖片書籍（支持 Canvas 和 Blob 圖片兩種模式）
 
         Args:
             reading_page: 閱讀頁面的 Page 物件
@@ -2381,7 +2570,8 @@ class HyReadScraper:
             完整的 Markdown 內容
         """
         logger.info("\n" + "=" * 60)
-        logger.info("📚 開始爬取純圖片書籍（Canvas Only 模式）")
+        logger.info("📚 開始爬取純圖片書籍（Blob Image 模式）")
+        logger.info(f"📐 圖片尺寸: {'小圖' if self.blob_image_size == 'small' else '大圖'}")
         logger.info("=" * 60)
         
         # 建立圖片目錄（使用書名或書籍 ID）
@@ -2406,8 +2596,8 @@ class HyReadScraper:
         # 點擊「我知道了」按鈕
         await self.click_accept_button(reading_page)
 
-        # 儲存所有 Canvas 圖片
-        all_canvas_images = []
+        # 儲存所有圖片
+        all_images = []
         page_number = 0
         consecutive_no_content = 0
         max_no_content = 10  # 連續 10 頁無內容就停止
@@ -2419,26 +2609,35 @@ class HyReadScraper:
             progress = await self.get_reading_progress(reading_page)
             logger.info(f"\n📖 正在掃描第 {page_number} 頁... [{progress['text']}] (進度: {progress['total_percent']}%)")
             
-            # 獲取所有可見的 iframe
-            visible_iframes = await self.get_all_visible_iframes(reading_page)
+            found_images = False
             
-            found_canvas = False
+            # 方法 1: 嘗試從頁面抓取 blob 圖片（新格式）
+            logger.info(f"      📄 嘗試抓取 Blob 圖片...")
+            blob_images = await self.scrape_blob_images_from_page(reading_page, page_number)
             
-            # 從每個 iframe 抓取 Canvas
-            for iframe_index, iframe in enumerate(visible_iframes):
-                logger.info(f"      📄 正在掃描 iframe[{iframe_index}]...")
+            if blob_images:
+                all_images.extend(blob_images)
+                found_images = True
+                logger.info(f"      ✅ 找到 {len(blob_images)} 張 Blob 圖片")
+            else:
+                # 方法 2: 回退到 iframe Canvas 抓取（舊格式）
+                logger.info(f"      📄 Blob 抓取無結果，嘗試 Canvas 模式...")
+                visible_iframes = await self.get_all_visible_iframes(reading_page)
                 
-                canvas_images = await self.scrape_canvas_from_iframe(iframe, page_number)
-                
-                if canvas_images:
-                    all_canvas_images.extend(canvas_images)
-                    found_canvas = True
-                    logger.info(f"      ✅ iframe[{iframe_index}] 找到 {len(canvas_images)} 張新圖片")
-                else:
-                    logger.info(f"      ℹ️  iframe[{iframe_index}] 無新 Canvas 圖片")
+                for iframe_index, iframe in enumerate(visible_iframes):
+                    logger.info(f"         🔍 掃描 iframe[{iframe_index}]...")
+                    
+                    canvas_images = await self.scrape_canvas_from_iframe(iframe, page_number)
+                    
+                    if canvas_images:
+                        all_images.extend(canvas_images)
+                        found_images = True
+                        logger.info(f"         ✅ iframe[{iframe_index}] 找到 {len(canvas_images)} 張 Canvas 圖片")
+                    else:
+                        logger.info(f"         ℹ️  iframe[{iframe_index}] 無 Canvas 圖片")
             
             # 更新連續無內容計數
-            if found_canvas:
+            if found_images:
                 consecutive_no_content = 0
             else:
                 consecutive_no_content += 1
@@ -2471,19 +2670,19 @@ class HyReadScraper:
                 logger.info(f"   ⚠️  翻頁失敗")
                 break
             
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.3)  # 稍微等待頁面渲染
         
         logger.info("\n" + "=" * 60)
         logger.success(f"✅ 爬取完成！")
         logger.info(f"   - 共掃描: {page_number} 頁")
-        logger.info(f"   - 找到圖片: {len(all_canvas_images)} 張")
+        logger.info(f"   - 找到圖片: {len(all_images)} 張")
         logger.info(f"   - 去重後: {len(self.canvas_hashes)} 張唯一圖片")
         logger.info("=" * 60)
         
         # 生成 Markdown 內容
         markdown_lines = []
         
-        for idx, img in enumerate(all_canvas_images, 1):
+        for idx, img in enumerate(all_images, 1):
             markdown_lines.append(f"![第 {img['page']} 頁]({img['path']})\n")
         
         return '\n'.join(markdown_lines)
