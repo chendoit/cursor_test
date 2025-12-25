@@ -65,12 +65,6 @@
       gap: 8px;
     }
 
-    .titleBlock {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 0;
-    }
     .title {
       font-size: 13px;
       font-weight: 700;
@@ -81,6 +75,7 @@
       background-clip: text;
       color: transparent;
     }
+
     .folderDisplay {
       font-size: 10px;
       color: var(--text1);
@@ -88,7 +83,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 160px;
+      padding: 4px 0;
     }
     .folderDisplay.hasFolder {
       color: var(--ok);
@@ -117,11 +112,41 @@
       font-size: 10px;
     }
 
+    .btnTicker {
+      padding: 3px 8px;
+      font-size: 10px;
+      font-family: var(--mono);
+      border-radius: 12px;
+      background: rgba(24, 34, 53, 0.6);
+      border: 1px solid var(--border);
+      color: var(--text0);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btnTicker:hover {
+      border-color: var(--accent);
+      background: rgba(76, 201, 240, 0.15);
+    }
+    .btnTicker.active {
+      border-color: var(--accent);
+      background: rgba(76, 201, 240, 0.25);
+      color: var(--accent);
+    }
+    .btnTicker.unavailable {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btnTicker.unavailable:hover {
+      border-color: var(--border);
+      background: rgba(24, 34, 53, 0.6);
+    }
+
     .controls {
       padding: 10px;
       display: flex;
       flex-direction: column;
       gap: 8px;
+      overflow-y: auto;
     }
 
     .row {
@@ -155,6 +180,19 @@
     select:focus {
       border-color: rgba(76, 201, 240, 0.55);
       box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.12);
+    }
+
+    .recentTickers {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 2px;
+    }
+    .recentTickersLabel {
+      font-size: 9px;
+      color: var(--text1);
+      width: 100%;
+      margin-bottom: 2px;
     }
 
     .main {
@@ -235,6 +273,9 @@
       font-size: 10px;
       color: var(--text1);
       line-height: 1.4;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
     }
     .hint kbd {
       font-family: var(--mono);
@@ -290,10 +331,7 @@
   <div class="app">
     <aside class="sidebar">
       <div class="sidebarHeader">
-        <div class="titleBlock">
-          <div class="title">GEX Archive Viewer</div>
-          <div class="folderDisplay" id="folderLabel">尚未選擇資料夾</div>
-        </div>
+        <div class="title">GEX Archive Viewer</div>
         <button class="btn btnSmall" id="collapseBtn" title="收合側欄">收合</button>
       </div>
 
@@ -304,6 +342,7 @@
           <button class="btn btnPrimary" id="pickFolderBtn">選擇資料夾</button>
           <button class="btn" id="rescanBtn" title="重新掃描資料夾以載入新增的檔案" disabled>重新掃描新增檔案</button>
         </div>
+        <div class="folderDisplay" id="folderLabel">尚未選擇資料夾</div>
 
         <div id="scanProgress" style="display:none;">
           <div style="font-size:10px; color:var(--text1);" id="scanProgressText">掃描中...</div>
@@ -313,6 +352,7 @@
         <div class="field">
           <label for="tickerSel">Ticker</label>
           <select id="tickerSel"></select>
+          <div class="recentTickers" id="recentTickers"></div>
         </div>
 
         <div class="row">
@@ -326,14 +366,14 @@
           </div>
         </div>
 
+        <div class="hint">
+          <kbd>↑</kbd>/<kbd>↓</kbd> 上/下一個　<kbd>←</kbd>/<kbd>→</kbd> 切換功能
+        </div>
+
         <div class="infoBox" id="currentInfo" style="display:none;">
           <div><span class="label">目前：</span><span class="value" id="infoDate">-</span></div>
           <div><span class="label">功能：</span><span class="value" id="infoFeature">-</span></div>
           <div><span class="label">位置：</span><span class="value" id="infoIndex">-</span></div>
-        </div>
-
-        <div class="hint" style="margin-top:auto;">
-          <kbd>↑</kbd>/<kbd>↓</kbd> 上/下一個　<kbd>←</kbd>/<kbd>→</kbd> 切換功能
         </div>
       </div>
     </aside>
@@ -369,7 +409,11 @@
       tickerSelected: false,
       scrollPosition: { x: 0, y: 0 },
       hasFolderSelected: false,
+      recentTickers: [],
     };
+
+    const RECENT_TICKERS_KEY = 'gex_recent_tickers';
+    const MAX_RECENT_TICKERS = 10;
 
     // -----------------------------
     // DOM
@@ -396,6 +440,7 @@
       infoDate: document.getElementById('infoDate'),
       infoFeature: document.getElementById('infoFeature'),
       infoIndex: document.getElementById('infoIndex'),
+      recentTickers: document.getElementById('recentTickers'),
     };
 
     // -----------------------------
@@ -495,10 +540,10 @@
 
     function saveScrollPosition() {
       try {
-        const iframeDoc = el.viewerFrame.contentWindow;
-        if (iframeDoc) {
-          state.scrollPosition.x = iframeDoc.scrollX || 0;
-          state.scrollPosition.y = iframeDoc.scrollY || 0;
+        const iframeWin = el.viewerFrame.contentWindow;
+        if (iframeWin) {
+          state.scrollPosition.x = iframeWin.scrollX || 0;
+          state.scrollPosition.y = iframeWin.scrollY || 0;
         }
       } catch (e) {
         // Cross-origin or not loaded yet - ignore
@@ -506,14 +551,100 @@
     }
 
     function restoreScrollPosition() {
+      // Wait a bit for Plotly to render
+      setTimeout(() => {
+        try {
+          const iframeWin = el.viewerFrame.contentWindow;
+          if (iframeWin) {
+            iframeWin.scrollTo(state.scrollPosition.x, state.scrollPosition.y);
+          }
+        } catch (e) {
+          // Cross-origin or not loaded yet - ignore
+        }
+      }, 150);
+    }
+
+    // -----------------------------
+    // Recent Tickers
+    // -----------------------------
+    function loadRecentTickers() {
       try {
-        const iframeDoc = el.viewerFrame.contentWindow;
-        if (iframeDoc) {
-          iframeDoc.scrollTo(state.scrollPosition.x, state.scrollPosition.y);
+        const saved = localStorage.getItem(RECENT_TICKERS_KEY);
+        if (saved) {
+          state.recentTickers = JSON.parse(saved);
         }
       } catch (e) {
-        // Cross-origin or not loaded yet - ignore
+        state.recentTickers = [];
       }
+    }
+
+    function saveRecentTickers() {
+      try {
+        localStorage.setItem(RECENT_TICKERS_KEY, JSON.stringify(state.recentTickers));
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    function addRecentTicker(ticker) {
+      if (!ticker) return;
+      // Remove if exists
+      state.recentTickers = state.recentTickers.filter(t => t !== ticker);
+      // Add to front
+      state.recentTickers.unshift(ticker);
+      // Keep only MAX
+      if (state.recentTickers.length > MAX_RECENT_TICKERS) {
+        state.recentTickers = state.recentTickers.slice(0, MAX_RECENT_TICKERS);
+      }
+      saveRecentTickers();
+      renderRecentTickers();
+    }
+
+    function renderRecentTickers() {
+      if (state.recentTickers.length === 0) {
+        el.recentTickers.innerHTML = '';
+        return;
+      }
+
+      const availableTickers = new Set(state.files.map(r => r.ticker));
+      const hasFiles = state.files.length > 0;
+      const currentTicker = getSelectedTicker();
+
+      el.recentTickers.innerHTML = `
+        <div class="recentTickersLabel">常用：</div>
+        ${state.recentTickers.map(t => {
+          const isAvailable = !hasFiles || availableTickers.has(t);
+          const isActive = t === currentTicker;
+          const classes = ['btnTicker'];
+          if (isActive) classes.push('active');
+          if (hasFiles && !availableTickers.has(t)) classes.push('unavailable');
+          return `<button class="${classes.join(' ')}" data-ticker="${escapeHtml(t)}" ${!isAvailable ? 'title="此 Ticker 不存在於目前資料夾"' : ''}>${escapeHtml(t)}</button>`;
+        }).join('')}
+      `;
+
+      // Add click handlers
+      el.recentTickers.querySelectorAll('.btnTicker').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const ticker = btn.dataset.ticker;
+          if (!ticker) return;
+          
+          // If no files loaded yet, just remember the selection
+          if (state.files.length === 0) {
+            setStatus('請先選擇資料夾載入檔案。', 'info');
+            return;
+          }
+          
+          // Check if ticker exists in current files
+          const availableTickers = new Set(state.files.map(r => r.ticker));
+          if (!availableTickers.has(ticker)) {
+            setStatus(`Ticker "${ticker}" 不存在於目前資料夾。`, 'error');
+            return;
+          }
+          
+          el.tickerSel.value = ticker;
+          onTickerChange();
+        });
+      });
     }
 
     // -----------------------------
@@ -577,6 +708,7 @@
       fillSelect(el.tickerSel, tickers, { placeholder: "-- 請選擇 --" });
       el.tickerSel.value = "__PLACEHOLDER__";
       state.tickerSelected = false;
+      renderRecentTickers();
     }
 
     function rebuildDateAndFeatureSelectors() {
@@ -592,10 +724,17 @@
       state.filtered = getFilteredByTicker();
       state.activeIndex = -1;
 
+      // Add to recent tickers
+      if (ticker) {
+        addRecentTicker(ticker);
+      }
+
       rebuildDateAndFeatureSelectors();
 
       if (state.tickerSelected && state.filtered.length > 0) {
         state.activeIndex = 0;
+        // Reset scroll position for new ticker
+        state.scrollPosition = { x: 0, y: 0 };
         openActive();
       } else {
         clearViewer();
@@ -603,6 +742,7 @@
 
       updateCurrentInfo();
       updateTopStatus();
+      renderRecentTickers();
 
       // Blur to allow keyboard navigation
       el.tickerSel.blur();
@@ -732,6 +872,8 @@
       fillSelect(el.featureSel, [], { placeholder: "-- 選擇 --" });
       el.rescanBtn.disabled = true;
       el.currentInfo.style.display = 'none';
+      // Don't clear recentTickers HTML - keep showing them
+      renderRecentTickers();
       clearViewer();
       setStatus('請先按「選擇資料夾」載入 HTML 存檔。', 'info');
       updatePageTitle(null);
@@ -1031,7 +1173,9 @@
     });
 
     // Init
+    loadRecentTickers();
     clearAll();
+    renderRecentTickers(); // Show recent tickers immediately
     tryAutoReconnectOnLoad();
   </script>
 </body>
