@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GEX HTML Archive Viewer</title>
 
-  <!-- Requirement: use Plotly CDN -->
-  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-
   <style>
     :root {
       --bg0: #0b0f14;
@@ -24,7 +21,7 @@
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       --topbar-h: 48px;
-      --sidebar-w: 340px;
+      --sidebar-w: 260px;
     }
 
     * { box-sizing: border-box; }
@@ -55,12 +52,12 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      min-width: 260px;
+      min-width: 200px;
       min-height: 0;
     }
 
     .sidebarHeader {
-      padding: 12px 12px 10px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -71,10 +68,11 @@
     .titleBlock {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 2px;
+      min-width: 0;
     }
     .title {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       letter-spacing: 0.2px;
       line-height: 1.1;
@@ -83,14 +81,17 @@
       background-clip: text;
       color: transparent;
     }
-    .subtitle {
-      font-size: 12px;
+    .folderDisplay {
+      font-size: 10px;
       color: var(--text1);
       font-family: var(--mono);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 210px;
+      max-width: 160px;
+    }
+    .folderDisplay.hasFolder {
+      color: var(--ok);
     }
 
     .btn {
@@ -98,133 +99,62 @@
       border: 1px solid var(--border);
       background: rgba(24, 34, 53, 0.8);
       color: var(--text0);
-      border-radius: 10px;
-      padding: 8px 10px;
-      font-size: 12px;
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 11px;
       cursor: pointer;
       transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
       user-select: none;
     }
     .btn:hover { border-color: rgba(76, 201, 240, 0.45); transform: translateY(-1px); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
     .btnPrimary {
       border-color: rgba(76, 201, 240, 0.40);
       background: linear-gradient(135deg, rgba(76, 201, 240, 0.22), rgba(181, 23, 158, 0.14));
     }
-    .btnDanger { border-color: rgba(248, 113, 113, 0.35); }
+    .btnSmall {
+      padding: 4px 6px;
+      font-size: 10px;
+    }
 
     .controls {
-      padding: 12px;
-      display: grid;
-      gap: 10px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     .row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 6px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
     }
 
     label {
-      display: block;
-      font-size: 11px;
+      font-size: 10px;
       color: var(--text1);
-      margin: 0 0 6px;
     }
 
-    select, input[type="text"] {
+    select {
       width: 100%;
-      padding: 8px 10px;
-      border-radius: 10px;
+      padding: 6px 8px;
+      border-radius: 8px;
       border: 1px solid var(--border);
       background: rgba(24, 34, 53, 0.65);
       color: var(--text0);
-      font-size: 12px;
+      font-size: 11px;
       font-family: var(--mono);
       outline: none;
     }
-    select:focus, input[type="text"]:focus {
+    select:focus {
       border-color: rgba(76, 201, 240, 0.55);
       box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.12);
-    }
-
-    .list {
-      flex: 1;
-      padding: 10px 12px 12px;
-      overflow: auto;
-      border-top: 1px solid var(--border);
-      min-height: 0;
-    }
-
-    .listHeader {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    .listTitle {
-      font-size: 12px;
-      color: var(--text1);
-      font-family: var(--mono);
-    }
-    .pill {
-      font-size: 11px;
-      padding: 3px 8px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(24, 34, 53, 0.5);
-      color: var(--text1);
-      font-family: var(--mono);
-      white-space: nowrap;
-    }
-
-    .item {
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      background: rgba(24, 34, 53, 0.45);
-      border-radius: 12px;
-      padding: 10px 10px;
-      display: grid;
-      gap: 6px;
-      margin-bottom: 8px;
-      cursor: pointer;
-      transition: border-color 0.15s ease, background 0.15s ease;
-    }
-    .item:hover { border-color: rgba(76, 201, 240, 0.35); background: rgba(24, 34, 53, 0.55); }
-    .item.active { border-color: rgba(76, 201, 240, 0.60); box-shadow: 0 0 0 3px rgba(76, 201, 240, 0.12); }
-
-    .itemTop {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      min-width: 0;
-    }
-    .itemMeta {
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--text0);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      min-width: 0;
-    }
-    .tag {
-      font-family: var(--mono);
-      font-size: 11px;
-      color: rgba(76, 201, 240, 0.95);
-      border: 1px solid rgba(76, 201, 240, 0.35);
-      background: rgba(76, 201, 240, 0.08);
-      padding: 2px 7px;
-      border-radius: 999px;
-      white-space: nowrap;
-    }
-    .path {
-      font-family: var(--mono);
-      font-size: 11px;
-      color: var(--text1);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     .main {
@@ -250,7 +180,7 @@
 
     .status {
       font-family: var(--mono);
-      font-size: 12px;
+      font-size: 11px;
       color: var(--text1);
       white-space: nowrap;
       overflow: hidden;
@@ -260,7 +190,7 @@
 
     .actions {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
       justify-content: flex-end;
     }
@@ -268,6 +198,29 @@
     .viewer {
       min-height: 0;
       background: rgba(11, 15, 20, 0.35);
+      position: relative;
+    }
+
+    .loadingOverlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(11, 15, 20, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.1s ease;
+    }
+    .loadingOverlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .loadingOverlay span {
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--accent);
     }
 
     iframe {
@@ -279,31 +232,57 @@
 
     .hint {
       font-family: var(--mono);
-      font-size: 12px;
+      font-size: 10px;
       color: var(--text1);
-      padding: 14px;
-      line-height: 1.5;
+      line-height: 1.4;
     }
     .hint kbd {
       font-family: var(--mono);
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 6px;
+      font-size: 9px;
+      padding: 1px 4px;
+      border-radius: 4px;
       border: 1px solid var(--border);
       background: rgba(24, 34, 53, 0.55);
       color: var(--text0);
     }
+
+    .progressBar {
+      height: 3px;
+      background: var(--bg2);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progressBar .fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      width: 0%;
+      transition: width 0.1s ease;
+    }
+
+    .infoBox {
+      background: rgba(24, 34, 53, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text1);
+      display: grid;
+      gap: 2px;
+    }
+    .infoBox .label { color: var(--text1); }
+    .infoBox .value { color: var(--text0); margin-left: 4px; }
 
     /* collapsed sidebar */
     body.sidebarCollapsed .app { grid-template-columns: 1fr; }
     body.sidebarCollapsed .sidebar { display: none; }
     body.sidebarCollapsed .main { min-width: 0; }
 
-    @media (max-width: 980px) {
+    @media (max-width: 800px) {
       .app { grid-template-columns: 1fr; }
       .sidebar { order: 2; min-width: 0; }
       .main { order: 1; }
-      .viewer { height: calc(100vh - 10px - 10px - var(--topbar-h) - 0px); }
     }
   </style>
 </head>
@@ -312,59 +291,50 @@
     <aside class="sidebar">
       <div class="sidebarHeader">
         <div class="titleBlock">
-          <div class="title">GEX HTML Archive Viewer</div>
-          <div class="subtitle" id="folderLabel">尚未選擇資料夾</div>
+          <div class="title">GEX Archive Viewer</div>
+          <div class="folderDisplay" id="folderLabel">尚未選擇資料夾</div>
         </div>
-        <button class="btn" id="collapseBtn" title="收合側欄">收合</button>
+        <button class="btn btnSmall" id="collapseBtn" title="收合側欄">收合</button>
       </div>
 
       <div class="controls">
         <input id="dirInput" type="file" webkitdirectory multiple style="display:none" />
 
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <div style="display:flex; gap:6px;">
           <button class="btn btnPrimary" id="pickFolderBtn">選擇資料夾</button>
-          <button class="btn" id="reconnectBtn" title="若已記住資料夾，嘗試自動連線" disabled>重新連線</button>
-          <button class="btn" id="forgetBtn" title="清除已記住的資料夾" disabled>忘記</button>
-          <button class="btn btnDanger" id="clearBtn" title="清空目前清單">清空</button>
+          <button class="btn" id="rescanBtn" title="重新掃描資料夾以載入新增的檔案" disabled>重新掃描新增檔案</button>
         </div>
-        <div style="font-size:11px; color:var(--ok); margin-top:4px;">
-          ⚠️ 瀏覽器可能顯示「上傳」字樣，但<strong>實際不會上傳或複製</strong>，只在本機讀取。
+
+        <div id="scanProgress" style="display:none;">
+          <div style="font-size:10px; color:var(--text1);" id="scanProgressText">掃描中...</div>
+          <div class="progressBar"><div class="fill" id="scanProgressFill"></div></div>
+        </div>
+
+        <div class="field">
+          <label for="tickerSel">Ticker</label>
+          <select id="tickerSel"></select>
         </div>
 
         <div class="row">
-          <div>
-            <label for="dateSel">日期</label>
+          <div class="field">
+            <label for="dateSel">跳到日期</label>
             <select id="dateSel"></select>
           </div>
-          <div>
-            <label for="tickerSel">Ticker</label>
-            <select id="tickerSel"></select>
-          </div>
-        </div>
-
-        <div class="row">
-          <div>
-            <label for="featureSel">功能</label>
+          <div class="field">
+            <label for="featureSel">跳到功能</label>
             <select id="featureSel"></select>
           </div>
-          <div>
-            <label for="searchTxt">搜尋</label>
-            <input id="searchTxt" type="text" placeholder="檔名/路徑關鍵字" />
-          </div>
         </div>
 
-        <div class="hint" style="padding: 10px 2px 0;">
-          鍵盤：<kbd>↑</kbd>/<kbd>↓</kbd> 同 ticker 上/下一個；
-          <kbd>←</kbd>/<kbd>→</kbd> 切換功能。
+        <div class="infoBox" id="currentInfo" style="display:none;">
+          <div><span class="label">目前：</span><span class="value" id="infoDate">-</span></div>
+          <div><span class="label">功能：</span><span class="value" id="infoFeature">-</span></div>
+          <div><span class="label">位置：</span><span class="value" id="infoIndex">-</span></div>
         </div>
-      </div>
 
-      <div class="list">
-        <div class="listHeader">
-          <div class="listTitle">檔案列表（篩選後）</div>
-          <div class="pill" id="countPill">0</div>
+        <div class="hint" style="margin-top:auto;">
+          <kbd>↑</kbd>/<kbd>↓</kbd> 上/下一個　<kbd>←</kbd>/<kbd>→</kbd> 切換功能
         </div>
-        <div id="listItems"></div>
       </div>
     </aside>
 
@@ -372,12 +342,13 @@
       <div class="topbar">
         <div class="status" id="statusText">請先按「選擇資料夾」載入 HTML 存檔。</div>
         <div class="actions">
-          <button class="btn" id="toggleSidebarBtn" title="收合/展開側欄">收合側欄</button>
-          <button class="btn" id="openNewTabBtn" title="用新分頁開啟目前檔案（Blob URL）" disabled>新分頁開啟</button>
-          <button class="btn" id="fullscreenBtn" title="全螢幕" disabled>全螢幕</button>
+          <button class="btn btnSmall" id="toggleSidebarBtn" title="收合/展開側欄">收合側欄</button>
+          <button class="btn btnSmall" id="openNewTabBtn" title="用新分頁開啟目前檔案" disabled>新分頁</button>
+          <button class="btn btnSmall" id="fullscreenBtn" title="全螢幕" disabled>全螢幕</button>
         </div>
       </div>
       <div class="viewer">
+        <div class="loadingOverlay" id="loadingOverlay"><span>載入中...</span></div>
         <iframe id="viewerFrame" title="HTML Viewer"></iframe>
       </div>
     </main>
@@ -388,12 +359,16 @@
     // State
     // -----------------------------
     const state = {
-      files: [], // parsed records
+      files: [],
       filtered: [],
       activeIndex: -1,
       activeObjectUrl: null,
-      activeBlobUrlForNewTab: null,
+      newTabBlobUrl: null,
       folderDisplayName: "",
+      lastDirHandle: null,
+      tickerSelected: false,
+      scrollPosition: { x: 0, y: 0 },
+      hasFolderSelected: false,
     };
 
     // -----------------------------
@@ -402,22 +377,25 @@
     const el = {
       dirInput: document.getElementById('dirInput'),
       pickFolderBtn: document.getElementById('pickFolderBtn'),
-      reconnectBtn: document.getElementById('reconnectBtn'),
-      forgetBtn: document.getElementById('forgetBtn'),
-      clearBtn: document.getElementById('clearBtn'),
+      rescanBtn: document.getElementById('rescanBtn'),
       folderLabel: document.getElementById('folderLabel'),
       dateSel: document.getElementById('dateSel'),
       tickerSel: document.getElementById('tickerSel'),
       featureSel: document.getElementById('featureSel'),
-      searchTxt: document.getElementById('searchTxt'),
-      listItems: document.getElementById('listItems'),
-      countPill: document.getElementById('countPill'),
       viewerFrame: document.getElementById('viewerFrame'),
       statusText: document.getElementById('statusText'),
       collapseBtn: document.getElementById('collapseBtn'),
       toggleSidebarBtn: document.getElementById('toggleSidebarBtn'),
       fullscreenBtn: document.getElementById('fullscreenBtn'),
       openNewTabBtn: document.getElementById('openNewTabBtn'),
+      loadingOverlay: document.getElementById('loadingOverlay'),
+      scanProgress: document.getElementById('scanProgress'),
+      scanProgressText: document.getElementById('scanProgressText'),
+      scanProgressFill: document.getElementById('scanProgressFill'),
+      currentInfo: document.getElementById('currentInfo'),
+      infoDate: document.getElementById('infoDate'),
+      infoFeature: document.getElementById('infoFeature'),
+      infoIndex: document.getElementById('infoIndex'),
     };
 
     // -----------------------------
@@ -433,9 +411,7 @@
     }
 
     function normalizeTime(raw) {
-      const t = raw.replace(';', ':');
-      // Expect HH:MM
-      return t;
+      return raw.replace(';', ':');
     }
 
     function parseRecordFromFileLike({ file, relPath, name }) {
@@ -450,16 +426,7 @@
       const ts = Number.isFinite(dt.getTime()) ? dt.getTime() : null;
       if (ts === null) return null;
 
-      return {
-        file,
-        relPath,
-        name,
-        date,
-        time,
-        ticker,
-        feature,
-        ts,
-      };
+      return { file, relPath, name, date, time, ticker, feature, ts };
     }
 
     function setStatus(text, kind = "info") {
@@ -467,148 +434,217 @@
       el.statusText.textContent = `${prefix}${text}`;
     }
 
-    function fillSelect(selectEl, values, { includeAll = true, allLabel = "All" } = {}) {
+    function updatePageTitle(record) {
+      if (record) {
+        document.title = `${record.ticker} ${record.date} ${record.time} ${record.feature} - GEX Viewer`;
+      } else {
+        document.title = 'GEX HTML Archive Viewer';
+      }
+    }
+
+    function updateFolderDisplay() {
+      if (state.hasFolderSelected && state.folderDisplayName) {
+        el.folderLabel.textContent = `📁 ${state.folderDisplayName}`;
+        el.folderLabel.classList.add('hasFolder');
+        el.pickFolderBtn.textContent = '更換資料夾';
+      } else {
+        el.folderLabel.textContent = '尚未選擇資料夾';
+        el.folderLabel.classList.remove('hasFolder');
+        el.pickFolderBtn.textContent = '選擇資料夾';
+      }
+    }
+
+    function fillSelect(selectEl, values, { placeholder = null } = {}) {
       const curr = selectEl.value;
       const opts = [];
-      if (includeAll) opts.push({ value: "__ALL__", label: allLabel });
+      if (placeholder) opts.push({ value: "__PLACEHOLDER__", label: placeholder, disabled: true });
       for (const v of values) opts.push({ value: v, label: v });
-      selectEl.innerHTML = opts.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('');
-      // Try keep selection
-      if (opts.some(o => o.value === curr)) selectEl.value = curr;
-      else selectEl.value = includeAll ? "__ALL__" : (values[0] ?? "");
+      selectEl.innerHTML = opts.map(o => 
+        `<option value="${escapeHtml(o.value)}" ${o.disabled ? 'disabled' : ''}>${escapeHtml(o.label)}</option>`
+      ).join('');
+      if (opts.some(o => o.value === curr && !o.disabled)) selectEl.value = curr;
+      else if (placeholder) selectEl.value = "__PLACEHOLDER__";
+      else selectEl.value = values[0] ?? "";
     }
 
-    function activeFilters() {
-      return {
-        date: el.dateSel.value,
-        ticker: el.tickerSel.value,
-        feature: el.featureSel.value,
-        q: (el.searchTxt.value || "").trim().toLowerCase(),
-      };
+    function getSelectedTicker() {
+      const v = el.tickerSel.value;
+      if (v === "__PLACEHOLDER__") return null;
+      return v;
     }
 
-    function getFiltered(records) {
-      const f = activeFilters();
-      return records.filter(r => {
-        if (f.date !== "__ALL__" && r.date !== f.date) return false;
-        if (f.ticker !== "__ALL__" && r.ticker !== f.ticker) return false;
-        if (f.feature !== "__ALL__" && r.feature !== f.feature) return false;
-        if (f.q) {
-          const hay = `${r.name} ${r.relPath}`.toLowerCase();
-          if (!hay.includes(f.q)) return false;
-        }
-        return true;
-      }).sort((a, b) => a.ts - b.ts || a.relPath.localeCompare(b.relPath));
-    }
-
-    function availableFeatureCycleSet() {
-      // Cycle features only when ticker chosen (not All), and within current date filter.
-      const f = activeFilters();
-      if (f.ticker === "__ALL__") return [];
-      const set = new Set();
-      for (const r of state.files) {
-        if (r.ticker !== f.ticker) continue;
-        if (f.date !== "__ALL__" && r.date !== f.date) continue;
-        // search q also affects "what I see"; but for cycle, keep it simple: ignore search.
-        set.add(r.feature);
-      }
-      return Array.from(set).sort((a, b) => a.localeCompare(b));
+    function getFilteredByTicker() {
+      const ticker = getSelectedTicker();
+      if (!ticker) return [];
+      return state.files
+        .filter(r => r.ticker === ticker)
+        .sort((a, b) => b.ts - a.ts || a.relPath.localeCompare(b.relPath));
     }
 
     function isTypingContext() {
       const a = document.activeElement;
       if (!a) return false;
       const tag = a.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || a.isContentEditable;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || a.isContentEditable;
+    }
+
+    function showLoading(show) {
+      if (show) el.loadingOverlay.classList.add('show');
+      else el.loadingOverlay.classList.remove('show');
+    }
+
+    function saveScrollPosition() {
+      try {
+        const iframeDoc = el.viewerFrame.contentWindow;
+        if (iframeDoc) {
+          state.scrollPosition.x = iframeDoc.scrollX || 0;
+          state.scrollPosition.y = iframeDoc.scrollY || 0;
+        }
+      } catch (e) {
+        // Cross-origin or not loaded yet - ignore
+      }
+    }
+
+    function restoreScrollPosition() {
+      try {
+        const iframeDoc = el.viewerFrame.contentWindow;
+        if (iframeDoc) {
+          iframeDoc.scrollTo(state.scrollPosition.x, state.scrollPosition.y);
+        }
+      } catch (e) {
+        // Cross-origin or not loaded yet - ignore
+      }
     }
 
     // -----------------------------
-    // Rendering
+    // UI Updates
     // -----------------------------
-    function renderList() {
-      const list = state.filtered;
-      el.countPill.textContent = String(list.length);
-
-      if (list.length === 0) {
-        el.listItems.innerHTML = `<div class="hint">沒有符合條件的檔案。<br/>提示：先按「選擇資料夾」，或把篩選改成 All。</div>`;
+    function updateCurrentInfo() {
+      if (!state.tickerSelected || state.filtered.length === 0 || state.activeIndex < 0) {
+        el.currentInfo.style.display = 'none';
         return;
       }
 
-      el.listItems.innerHTML = list.map((r, idx) => {
-        const active = idx === state.activeIndex ? "active" : "";
-        return `
-          <div class="item ${active}" data-idx="${idx}">
-            <div class="itemTop">
-              <div class="itemMeta">${escapeHtml(r.date)} ${escapeHtml(r.time)} · ${escapeHtml(r.ticker)}</div>
-              <div class="tag">${escapeHtml(r.feature)}</div>
-            </div>
-            <div class="path">${escapeHtml(r.relPath)}</div>
-          </div>
-        `;
-      }).join('');
+      const r = state.filtered[state.activeIndex];
+      if (!r) {
+        el.currentInfo.style.display = 'none';
+        return;
+      }
+
+      el.currentInfo.style.display = 'grid';
+      el.infoDate.textContent = `${r.date} ${r.time}`;
+      el.infoFeature.textContent = r.feature;
+      el.infoIndex.textContent = `${state.activeIndex + 1} / ${state.filtered.length}`;
     }
 
-    // Plotly timeline removed by request.
-
     function updateTopStatus() {
-      const f = activeFilters();
+      if (!state.tickerSelected) {
+        setStatus('請選擇 Ticker 開始瀏覽。', 'info');
+        el.openNewTabBtn.disabled = true;
+        el.fullscreenBtn.disabled = true;
+        updatePageTitle(null);
+        return;
+      }
+
       if (state.filtered.length === 0) {
         setStatus('尚無可顯示項目。', 'info');
         el.openNewTabBtn.disabled = true;
         el.fullscreenBtn.disabled = true;
+        updatePageTitle(null);
         return;
       }
-      const r = state.filtered[state.activeIndex] || null;
-      const idxInfo = `${Math.max(0, state.activeIndex) + 1}/${state.filtered.length}`;
-      const filterInfo = `日期=${f.date === "__ALL__" ? "All" : f.date} · Ticker=${f.ticker === "__ALL__" ? "All" : f.ticker} · 功能=${f.feature === "__ALL__" ? "All" : f.feature}`;
 
+      const r = state.filtered[state.activeIndex] || null;
       if (!r) {
-        setStatus(`${filterInfo} · ${idxInfo}`, 'info');
+        setStatus(`共 ${state.filtered.length} 筆`, 'info');
         el.openNewTabBtn.disabled = true;
         el.fullscreenBtn.disabled = true;
+        updatePageTitle(null);
         return;
       }
 
-      setStatus(`${r.date} ${r.time} ${r.ticker} · ${r.feature} · ${idxInfo}`, 'ok');
-      el.openNewTabBtn.disabled = !state.activeBlobUrlForNewTab;
+      setStatus(`${r.date} ${r.time} · ${r.feature} · ${state.activeIndex + 1}/${state.filtered.length}`, 'ok');
+      el.openNewTabBtn.disabled = false;
       el.fullscreenBtn.disabled = false;
+      updatePageTitle(r);
     }
 
     // -----------------------------
     // Actions
     // -----------------------------
-    function rebuildFiltersAndView({ keepNearestToTs = null } = {}) {
-      state.filtered = getFiltered(state.files);
+    function rebuildTickerSelector() {
+      const tickers = Array.from(new Set(state.files.map(r => r.ticker))).sort((a, b) => a.localeCompare(b));
+      fillSelect(el.tickerSel, tickers, { placeholder: "-- 請選擇 --" });
+      el.tickerSel.value = "__PLACEHOLDER__";
+      state.tickerSelected = false;
+    }
 
-      // rebuild dropdown options based on all scanned files (not filtered)
-      const allDates = Array.from(new Set(state.files.map(r => r.date))).sort((a, b) => a.localeCompare(b));
-      const allTickers = Array.from(new Set(state.files.map(r => r.ticker))).sort((a, b) => a.localeCompare(b));
-      const allFeatures = Array.from(new Set(state.files.map(r => r.feature))).sort((a, b) => a.localeCompare(b));
-      fillSelect(el.dateSel, allDates, { includeAll: true, allLabel: "All" });
-      fillSelect(el.tickerSel, allTickers, { includeAll: true, allLabel: "All" });
-      fillSelect(el.featureSel, allFeatures, { includeAll: true, allLabel: "All" });
+    function rebuildDateAndFeatureSelectors() {
+      const dates = Array.from(new Set(state.filtered.map(r => r.date))).sort((a, b) => b.localeCompare(a));
+      const features = Array.from(new Set(state.filtered.map(r => r.feature))).sort((a, b) => a.localeCompare(b));
+      fillSelect(el.dateSel, dates, { placeholder: "-- 選擇 --" });
+      fillSelect(el.featureSel, features, { placeholder: "-- 選擇 --" });
+    }
 
-      // active index
-      if (state.filtered.length === 0) {
-        state.activeIndex = -1;
-        clearViewer();
-      } else if (keepNearestToTs != null) {
-        let best = 0;
-        let bestScore = Infinity;
-        for (let i = 0; i < state.filtered.length; i++) {
-          const score = Math.abs(state.filtered[i].ts - keepNearestToTs);
-          if (score < bestScore) { bestScore = score; best = i; }
-        }
-        state.activeIndex = best;
+    function onTickerChange() {
+      const ticker = getSelectedTicker();
+      state.tickerSelected = !!ticker;
+      state.filtered = getFilteredByTicker();
+      state.activeIndex = -1;
+
+      rebuildDateAndFeatureSelectors();
+
+      if (state.tickerSelected && state.filtered.length > 0) {
+        state.activeIndex = 0;
         openActive();
       } else {
-        state.activeIndex = Math.min(Math.max(state.activeIndex, 0), state.filtered.length - 1);
-        if (state.activeIndex === -1) state.activeIndex = 0;
-        openActive();
+        clearViewer();
       }
 
-      renderList();
+      updateCurrentInfo();
       updateTopStatus();
+
+      // Blur to allow keyboard navigation
+      el.tickerSel.blur();
+    }
+
+    function jumpToDate() {
+      const date = el.dateSel.value;
+      if (date === "__PLACEHOLDER__" || !state.tickerSelected) return;
+
+      const idx = state.filtered.findIndex(r => r.date === date);
+      if (idx !== -1 && idx !== state.activeIndex) {
+        setActiveIndexFast(idx);
+      }
+
+      // Blur to allow keyboard navigation
+      el.dateSel.blur();
+    }
+
+    function jumpToFeature() {
+      const feature = el.featureSel.value;
+      if (feature === "__PLACEHOLDER__" || !state.tickerSelected) return;
+
+      const currRecord = state.filtered[state.activeIndex];
+      let idx = -1;
+
+      if (currRecord) {
+        idx = state.filtered.findIndex(r => r.date === currRecord.date && r.time === currRecord.time && r.feature === feature);
+        if (idx === -1) {
+          idx = state.filtered.findIndex(r => r.date === currRecord.date && r.feature === feature);
+        }
+      }
+
+      if (idx === -1) {
+        idx = state.filtered.findIndex(r => r.feature === feature);
+      }
+
+      if (idx !== -1 && idx !== state.activeIndex) {
+        setActiveIndexFast(idx);
+      }
+
+      // Blur to allow keyboard navigation
+      el.featureSel.blur();
     }
 
     function clearViewer() {
@@ -616,30 +652,48 @@
         URL.revokeObjectURL(state.activeObjectUrl);
         state.activeObjectUrl = null;
       }
-      state.activeBlobUrlForNewTab = null;
       el.viewerFrame.removeAttribute('src');
       el.viewerFrame.removeAttribute('srcdoc');
       el.viewerFrame.style.background = '#ffffff';
       el.openNewTabBtn.disabled = true;
       el.fullscreenBtn.disabled = true;
+      showLoading(false);
     }
 
     function openRecord(record) {
-      clearViewer();
-      // Fast path: use the File object directly as a Blob URL
+      // Save current scroll position before loading new content
+      saveScrollPosition();
+
+      if (state.activeObjectUrl) {
+        URL.revokeObjectURL(state.activeObjectUrl);
+        state.activeObjectUrl = null;
+      }
+
       try {
         const url = URL.createObjectURL(record.file);
         state.activeObjectUrl = url;
-        state.activeBlobUrlForNewTab = url;
+
+        // Set up onload handler to restore scroll position
+        el.viewerFrame.onload = () => {
+          restoreScrollPosition();
+        };
+
         el.viewerFrame.src = url;
+
+        if (state.newTabBlobUrl) {
+          URL.revokeObjectURL(state.newTabBlobUrl);
+        }
+        state.newTabBlobUrl = URL.createObjectURL(record.file);
+
         el.openNewTabBtn.disabled = false;
         el.fullscreenBtn.disabled = false;
       } catch (e) {
-        // fallback: srcdoc
         record.file.text().then(html => {
-          clearViewer();
+          el.viewerFrame.onload = () => {
+            restoreScrollPosition();
+          };
           el.viewerFrame.srcdoc = html;
-          state.activeBlobUrlForNewTab = null;
+          state.newTabBlobUrl = null;
           el.openNewTabBtn.disabled = true;
           el.fullscreenBtn.disabled = false;
         }).catch(err => {
@@ -653,27 +707,14 @@
       if (state.activeIndex < 0 || state.activeIndex >= state.filtered.length) return;
       const r = state.filtered[state.activeIndex];
       openRecord(r);
-      // highlight list
-      highlightActiveInList();
+      updateCurrentInfo();
       updateTopStatus();
     }
 
-    function highlightActiveInList() {
-      const nodes = el.listItems.querySelectorAll('.item');
-      nodes.forEach(n => n.classList.remove('active'));
-      const active = el.listItems.querySelector(`.item[data-idx="${state.activeIndex}"]`);
-      if (active) active.classList.add('active');
-    }
-
-    function setActiveIndex(idx, { scrollIntoView = false } = {}) {
+    function setActiveIndexFast(idx) {
       if (state.filtered.length === 0) return;
       state.activeIndex = ((idx % state.filtered.length) + state.filtered.length) % state.filtered.length;
       openActive();
-      renderList();
-      if (scrollIntoView) {
-        const node = el.listItems.querySelector(`.item[data-idx="${state.activeIndex}"]`);
-        node?.scrollIntoView({ block: 'nearest' });
-      }
     }
 
     function clearAll() {
@@ -681,19 +722,23 @@
       state.filtered = [];
       state.activeIndex = -1;
       state.folderDisplayName = "";
-      el.folderLabel.textContent = '尚未選擇資料夾';
-      fillSelect(el.dateSel, [], { includeAll: true, allLabel: "All" });
-      fillSelect(el.tickerSel, [], { includeAll: true, allLabel: "All" });
-      fillSelect(el.featureSel, [], { includeAll: true, allLabel: "All" });
-      el.searchTxt.value = '';
-      el.listItems.innerHTML = `<div class="hint">請按「選擇資料夾」。</div>`;
-      el.countPill.textContent = '0';
+      state.tickerSelected = false;
+      state.lastDirHandle = null;
+      state.hasFolderSelected = false;
+      state.scrollPosition = { x: 0, y: 0 };
+      updateFolderDisplay();
+      fillSelect(el.tickerSel, [], { placeholder: "-- 請選擇 --" });
+      fillSelect(el.dateSel, [], { placeholder: "-- 選擇 --" });
+      fillSelect(el.featureSel, [], { placeholder: "-- 選擇 --" });
+      el.rescanBtn.disabled = true;
+      el.currentInfo.style.display = 'none';
       clearViewer();
       setStatus('請先按「選擇資料夾」載入 HTML 存檔。', 'info');
+      updatePageTitle(null);
     }
 
     // -----------------------------
-    // Persistence: remember folder (when supported)
+    // Persistence
     // -----------------------------
     const idb = {
       db: null,
@@ -730,16 +775,6 @@
           req.onerror = () => reject(req.error);
         });
       },
-      async del(key) {
-        const db = await this.open();
-        return await new Promise((resolve, reject) => {
-          const tx = db.transaction('kv', 'readwrite');
-          const store = tx.objectStore('kv');
-          const req = store.delete(key);
-          req.onsuccess = () => resolve(true);
-          req.onerror = () => reject(req.error);
-        });
-      }
     };
 
     async function canUseDirectoryHandle() {
@@ -747,52 +782,52 @@
     }
 
     async function tryAutoReconnectOnLoad() {
-      // Only possible if browser supports directory handles and the page is in a context that allows it.
       try {
         if (!(await canUseDirectoryHandle())) return;
         const saved = await idb.get('lastDirHandle');
         if (!saved) return;
 
-        // If permission already granted, we can auto-scan without a click.
         const perm = await saved.queryPermission?.({ mode: 'read' });
-        el.reconnectBtn.disabled = false;
-        el.forgetBtn.disabled = false;
-        el.folderLabel.textContent = saved.name ? `已記住：${saved.name}` : '已記住資料夾';
+        state.folderDisplayName = saved.name || '';
+        state.hasFolderSelected = true;
+        updateFolderDisplay();
 
         if (perm === 'granted') {
           await scanDirectoryHandle(saved);
         } else {
-          setStatus('已記住資料夾；按「重新連線」即可載入（不會上傳）。', 'info');
+          setStatus('按「更換資料夾」或「重新掃描新增檔案」載入。', 'info');
+          state.lastDirHandle = saved;
+          el.rescanBtn.disabled = false;
         }
       } catch {
         // ignore
       }
     }
 
-    async function forgetSavedFolder() {
-      try {
-        await idb.del('lastDirHandle');
-      } catch {
-        // ignore
-      }
-      el.reconnectBtn.disabled = true;
-      el.forgetBtn.disabled = true;
-      setStatus('已清除記住的資料夾。', 'ok');
-    }
-
     async function scanDirectoryHandle(dirHandle) {
-      clearAll();
       state.folderDisplayName = dirHandle?.name || '(資料夾)';
-      el.folderLabel.textContent = state.folderDisplayName;
+      state.hasFolderSelected = true;
+      updateFolderDisplay();
+      state.lastDirHandle = dirHandle;
 
       const records = [];
       let skipped = 0;
+      let scannedCount = 0;
+
+      el.scanProgress.style.display = 'block';
+      el.scanProgressText.textContent = '掃描中...';
+      el.scanProgressFill.style.width = '0%';
 
       async function walk(handle, prefix) {
         for await (const entry of handle.values()) {
           if (entry.kind === 'directory') {
             await walk(entry, `${prefix}${entry.name}/`);
           } else if (entry.kind === 'file') {
+            scannedCount++;
+            if (scannedCount % 50 === 0) {
+              el.scanProgressText.textContent = `已掃描 ${scannedCount} 個檔案...`;
+              await new Promise(r => setTimeout(r, 0));
+            }
             if (!entry.name.toLowerCase().endsWith('.html')) { skipped++; continue; }
             const file = await entry.getFile();
             const relPath = `${prefix}${entry.name}`;
@@ -805,45 +840,57 @@
 
       await walk(dirHandle, `${state.folderDisplayName}/`);
 
+      el.scanProgress.style.display = 'none';
+
       if (records.length === 0) {
-        setStatus('找不到符合命名規則的 .html。請確認檔名格式：yyyy-mm-dd_時間_ticker_功能.html', 'error');
+        setStatus('找不到符合命名規則的 .html。格式：yyyy-mm-dd_時間_ticker_功能.html', 'error');
         return;
       }
 
-      state.files = records.sort((a, b) => a.ts - b.ts || a.relPath.localeCompare(b.relPath));
+      state.files = records.sort((a, b) => b.ts - a.ts || a.relPath.localeCompare(b.relPath));
 
-      fillSelect(el.dateSel, Array.from(new Set(state.files.map(r => r.date))).sort(), { includeAll: true, allLabel: "All" });
-      fillSelect(el.tickerSel, Array.from(new Set(state.files.map(r => r.ticker))).sort(), { includeAll: true, allLabel: "All" });
-      fillSelect(el.featureSel, Array.from(new Set(state.files.map(r => r.feature))).sort(), { includeAll: true, allLabel: "All" });
-      el.dateSel.value = "__ALL__";
-      el.tickerSel.value = "__ALL__";
-      el.featureSel.value = "__ALL__";
+      rebuildTickerSelector();
+      rebuildDateAndFeatureSelectors();
 
-      state.filtered = getFiltered(state.files);
-      state.activeIndex = 0;
-      openActive();
-      renderList();
+      state.filtered = [];
+      state.activeIndex = -1;
+      state.tickerSelected = false;
+
+      updateCurrentInfo();
       updateTopStatus();
+      el.rescanBtn.disabled = false;
 
-      setStatus(`載入 ${state.files.length} 個 HTML（略過 ${skipped} 個不符合規則/非 HTML）。`, 'ok');
+      setStatus(`已載入 ${state.files.length} 個 HTML。請選擇 Ticker。`, 'ok');
     }
 
     async function scanFiles(fileList) {
-      clearAll();
       const files = Array.from(fileList || []);
       if (files.length === 0) {
         setStatus('你沒有選到任何檔案。', 'error');
         return;
       }
 
-      // Derive folder display name from first file's relative path
+      el.scanProgress.style.display = 'block';
+      el.scanProgressText.textContent = '掃描中...';
+      el.scanProgressFill.style.width = '0%';
+
       const rp = files[0].webkitRelativePath || "";
       state.folderDisplayName = rp ? rp.split('/')[0] : "(已選取)";
-      el.folderLabel.textContent = state.folderDisplayName;
+      state.hasFolderSelected = true;
+      updateFolderDisplay();
+      state.lastDirHandle = null;
 
       const records = [];
       let skipped = 0;
-      for (const f of files) {
+      const total = files.length;
+
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (i % 50 === 0) {
+          el.scanProgressText.textContent = `已掃描 ${i}/${total} 個檔案...`;
+          el.scanProgressFill.style.width = `${Math.round(i / total * 100)}%`;
+          await new Promise(r => setTimeout(r, 0));
+        }
         if (!f.name.toLowerCase().endsWith('.html')) { skipped++; continue; }
         const relPath = f.webkitRelativePath || f.name;
         const rec = parseRecordFromFileLike({ file: f, relPath, name: f.name });
@@ -851,89 +898,75 @@
         records.push(rec);
       }
 
+      el.scanProgress.style.display = 'none';
+
       if (records.length === 0) {
-        setStatus('找不到符合命名規則的 .html。請確認檔名格式：yyyy-mm-dd_時間_ticker_功能.html', 'error');
+        setStatus('找不到符合命名規則的 .html。格式：yyyy-mm-dd_時間_ticker_功能.html', 'error');
         return;
       }
 
-      state.files = records.sort((a, b) => a.ts - b.ts || a.relPath.localeCompare(b.relPath));
+      state.files = records.sort((a, b) => b.ts - a.ts || a.relPath.localeCompare(b.relPath));
 
-      // Fill filters (initially All)
-      fillSelect(el.dateSel, Array.from(new Set(state.files.map(r => r.date))).sort(), { includeAll: true, allLabel: "All" });
-      fillSelect(el.tickerSel, Array.from(new Set(state.files.map(r => r.ticker))).sort(), { includeAll: true, allLabel: "All" });
-      fillSelect(el.featureSel, Array.from(new Set(state.files.map(r => r.feature))).sort(), { includeAll: true, allLabel: "All" });
-      el.dateSel.value = "__ALL__";
-      el.tickerSel.value = "__ALL__";
-      el.featureSel.value = "__ALL__";
+      rebuildTickerSelector();
+      rebuildDateAndFeatureSelectors();
 
-      state.filtered = getFiltered(state.files);
-      state.activeIndex = 0;
-      openActive();
-      renderList();
+      state.filtered = [];
+      state.activeIndex = -1;
+      state.tickerSelected = false;
+
+      updateCurrentInfo();
       updateTopStatus();
+      el.rescanBtn.disabled = true;
 
-      const msg = `載入 ${state.files.length} 個 HTML（略過 ${skipped} 個不符合規則/非 HTML）。`;
-      setStatus(msg, 'ok');
+      setStatus(`已載入 ${state.files.length} 個 HTML。請選擇 Ticker。`, 'ok');
     }
 
     // -----------------------------
     // Events
     // -----------------------------
     el.pickFolderBtn.addEventListener('click', async () => {
-      // Prefer true directory handle (can be remembered). If not available or blocked, fallback to webkitdirectory input.
       try {
         if (await canUseDirectoryHandle()) {
           const handle = await window.showDirectoryPicker({ mode: 'read' });
           try {
             await idb.set('lastDirHandle', handle);
-            el.reconnectBtn.disabled = false;
-            el.forgetBtn.disabled = false;
           } catch {
-            // If persisting handle fails, continue without persistence.
+            // ignore
           }
           await scanDirectoryHandle(handle);
           return;
         }
       } catch (e) {
-        // Likely blocked in non-secure context (file://). We'll fallback to webkitdirectory.
-        setStatus('此環境無法使用「記住資料夾」；改用本機選取（不會上傳）。', 'info');
+        if (e.name !== 'AbortError') {
+          setStatus('此環境無法使用「記住資料夾」；改用本機選取。', 'info');
+        } else {
+          return;
+        }
       }
       el.dirInput.click();
     });
     el.dirInput.addEventListener('change', (e) => scanFiles(e.target.files));
 
-    el.clearBtn.addEventListener('click', () => clearAll());
-    el.reconnectBtn.addEventListener('click', async () => {
+    el.rescanBtn.addEventListener('click', async () => {
+      if (!state.lastDirHandle) {
+        setStatus('沒有可重新掃描的資料夾。請先選擇資料夾。', 'error');
+        return;
+      }
       try {
-        const saved = await idb.get('lastDirHandle');
-        if (!saved) {
-          setStatus('尚未記住任何資料夾。', 'info');
-          return;
-        }
-        // Request permission requires user gesture (this click).
-        const perm = await saved.requestPermission?.({ mode: 'read' });
+        const perm = await state.lastDirHandle.requestPermission?.({ mode: 'read' });
         if (perm !== 'granted') {
           setStatus('未授權讀取資料夾。', 'error');
           return;
         }
-        await scanDirectoryHandle(saved);
+        await scanDirectoryHandle(state.lastDirHandle);
       } catch (e) {
-        setStatus(`重新連線失敗：${e?.message || e}`, 'error');
+        setStatus(`重新掃描失敗：${e?.message || e}`, 'error');
       }
     });
-    el.forgetBtn.addEventListener('click', () => forgetSavedFolder());
-    el.searchTxt.addEventListener('input', () => rebuildFiltersAndView());
-    el.dateSel.addEventListener('change', () => rebuildFiltersAndView());
-    el.tickerSel.addEventListener('change', () => rebuildFiltersAndView());
-    el.featureSel.addEventListener('change', () => rebuildFiltersAndView());
 
-    el.listItems.addEventListener('click', (e) => {
-      const item = e.target.closest('.item');
-      if (!item) return;
-      const idx = Number(item.dataset.idx);
-      if (!Number.isFinite(idx)) return;
-      setActiveIndex(idx, { scrollIntoView: false });
-    });
+    el.tickerSel.addEventListener('change', onTickerChange);
+    el.dateSel.addEventListener('change', jumpToDate);
+    el.featureSel.addEventListener('change', jumpToFeature);
 
     function setSidebarCollapsed(collapsed) {
       if (collapsed) document.body.classList.add('sidebarCollapsed');
@@ -958,85 +991,42 @@
     });
 
     el.openNewTabBtn.addEventListener('click', () => {
-      if (!state.activeBlobUrlForNewTab) return;
-      window.open(state.activeBlobUrlForNewTab, '_blank', 'noopener,noreferrer');
+      if (!state.newTabBlobUrl) return;
+      window.open(state.newTabBlobUrl, '_blank', 'noopener,noreferrer');
     });
 
     document.addEventListener('keydown', (e) => {
       if (isTypingContext()) return;
-      if (state.filtered.length === 0) return;
+      if (!state.tickerSelected || state.filtered.length === 0) return;
 
-      // Up/Down: navigate within the SAME ticker only (sorted by date+time)
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
-        const currRecord = state.filtered[state.activeIndex];
-        if (!currRecord) return;
-
-        // Build a subset of filtered items with the same ticker, sorted by ts
-        const sameTicker = state.filtered
-          .map((r, idx) => ({ r, idx }))
-          .filter(x => x.r.ticker === currRecord.ticker);
-        if (sameTicker.length === 0) return;
-
-        // Find current position in this subset
-        const posInSubset = sameTicker.findIndex(x => x.idx === state.activeIndex);
-        if (posInSubset === -1) return;
-
-        // Move within subset (with wrap-around)
         const dir = e.key === 'ArrowUp' ? -1 : 1;
-        const nextPosInSubset = (posInSubset + dir + sameTicker.length) % sameTicker.length;
-        const nextGlobalIdx = sameTicker[nextPosInSubset].idx;
-
-        setActiveIndex(nextGlobalIdx, { scrollIntoView: true });
+        const nextIdx = (state.activeIndex + dir + state.filtered.length) % state.filtered.length;
+        setActiveIndexFast(nextIdx);
         return;
       }
 
-      // Left/Right: cycle through features (requires ticker selected or uses current active ticker)
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const currRecord = state.filtered[state.activeIndex];
         if (!currRecord) return;
 
-        // Use current record's ticker for feature cycling
-        const targetTicker = currRecord.ticker;
+        const sameDateTime = state.filtered.filter(r => r.date === currRecord.date && r.time === currRecord.time);
+        const features = Array.from(new Set(sameDateTime.map(r => r.feature))).sort((a, b) => a.localeCompare(b));
+        if (features.length <= 1) return;
 
-        // Get all features available for this ticker (respecting date filter)
-        const f = activeFilters();
-        const features = [];
-        const seen = new Set();
-        for (const r of state.files) {
-          if (r.ticker !== targetTicker) continue;
-          if (f.date !== "__ALL__" && r.date !== f.date) continue;
-          if (!seen.has(r.feature)) {
-            seen.add(r.feature);
-            features.push(r.feature);
-          }
+        const currFeatureIdx = features.indexOf(currRecord.feature);
+        const dir = e.key === 'ArrowLeft' ? -1 : 1;
+        const nextFeatureIdx = (currFeatureIdx + dir + features.length) % features.length;
+        const nextFeature = features[nextFeatureIdx];
+
+        const targetIdx = state.filtered.findIndex(r => 
+          r.date === currRecord.date && r.time === currRecord.time && r.feature === nextFeature
+        );
+        if (targetIdx !== -1) {
+          setActiveIndexFast(targetIdx);
         }
-        features.sort((a, b) => a.localeCompare(b));
-        if (features.length === 0) return;
-
-        const currFeature = currRecord.feature;
-        const currIdx = features.indexOf(currFeature);
-
-        const dir = (e.key === 'ArrowLeft') ? -1 : 1;
-        const nextIdx = currIdx === -1 ? 0 : (currIdx + dir + features.length) % features.length;
-        const nextFeature = features[nextIdx];
-
-        // Keep ts to find nearest item after filter change
-        const keepTs = currRecord.ts;
-
-        // Update feature filter (set to specific feature, not All)
-        el.featureSel.value = nextFeature;
-
-        // Also ensure ticker filter matches the current ticker (so filtered list is correct)
-        el.tickerSel.value = targetTicker;
-
-        // Rebuild and find closest item
-        rebuildFiltersAndView({ keepNearestToTs: keepTs });
-
-        // Make sure active item visible
-        const node = el.listItems.querySelector(`.item[data-idx="${state.activeIndex}"]`);
-        node?.scrollIntoView({ block: 'nearest' });
       }
     });
 
@@ -1046,4 +1036,3 @@
   </script>
 </body>
 </html>
-
