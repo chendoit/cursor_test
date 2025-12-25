@@ -88,6 +88,9 @@
     .folderDisplay.hasFolder {
       color: var(--ok);
     }
+    .folderDisplay.cached {
+      color: var(--warn);
+    }
 
     .btn {
       appearance: none;
@@ -315,6 +318,15 @@
     .infoBox .label { color: var(--text1); }
     .infoBox .value { color: var(--text0); margin-left: 4px; }
 
+    .cacheNote {
+      font-size: 9px;
+      color: var(--warn);
+      padding: 4px 8px;
+      background: rgba(251, 191, 36, 0.1);
+      border-radius: 6px;
+      border: 1px solid rgba(251, 191, 36, 0.2);
+    }
+
     /* collapsed sidebar */
     body.sidebarCollapsed .app { grid-template-columns: 1fr; }
     body.sidebarCollapsed .sidebar { display: none; }
@@ -338,11 +350,18 @@
       <div class="controls">
         <input id="dirInput" type="file" webkitdirectory multiple style="display:none" />
 
-        <div style="display:flex; gap:6px;">
-          <button class="btn btnPrimary" id="pickFolderBtn">選擇資料夾</button>
-          <button class="btn" id="rescanBtn" title="重新掃描資料夾以載入新增的檔案" disabled>重新掃描新增檔案</button>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="btn btnPrimary" id="authorizeBtn" style="display:none;">授權存取</button>
+          <button class="btn" id="pickFolderBtn">選擇資料夾</button>
+          <button class="btn" id="rescanBtn" title="重新掃描資料夾以載入新增的檔案" style="display:none;">重新掃描新增檔案</button>
         </div>
         <div class="folderDisplay" id="folderLabel">尚未選擇資料夾</div>
+        <div style="font-size:9px; color:var(--text1); margin-top:2px;">
+          💡 本機 HTML 程式，不會複製或上傳檔案，但需授權讀取
+        </div>
+        <div class="cacheNote" id="cacheNote" style="display:none;">
+          🔒 需授權存取才能瀏覽檔案內容
+        </div>
 
         <div id="scanProgress" style="display:none;">
           <div style="font-size:10px; color:var(--text1);" id="scanProgressText">掃描中...</div>
@@ -400,6 +419,8 @@
     // -----------------------------
     const state = {
       files: [],
+      cachedRecords: [],
+      displayRecords: [],
       filtered: [],
       activeIndex: -1,
       activeObjectUrl: null,
@@ -407,22 +428,29 @@
       folderDisplayName: "",
       lastDirHandle: null,
       tickerSelected: false,
-      scrollPosition: { x: 0, y: 0 },
       hasFolderSelected: false,
       recentTickers: [],
+      usingCache: false,
+      fileMap: new Map(),
     };
 
     const RECENT_TICKERS_KEY = 'gex_recent_tickers';
     const MAX_RECENT_TICKERS = 10;
+    const IDB_NAME = 'gex_viewer';
+    const IDB_VERSION = 2; // Bump version to add fileCache store
+    const CACHE_STORE = 'fileCache';
+    const KV_STORE = 'kv';
 
     // -----------------------------
     // DOM
     // -----------------------------
     const el = {
       dirInput: document.getElementById('dirInput'),
+      authorizeBtn: document.getElementById('authorizeBtn'),
       pickFolderBtn: document.getElementById('pickFolderBtn'),
       rescanBtn: document.getElementById('rescanBtn'),
       folderLabel: document.getElementById('folderLabel'),
+      cacheNote: document.getElementById('cacheNote'),
       dateSel: document.getElementById('dateSel'),
       tickerSel: document.getElementById('tickerSel'),
       featureSel: document.getElementById('featureSel'),
@@ -474,6 +502,14 @@
       return { file, relPath, name, date, time, ticker, feature, ts };
     }
 
+    function parseRecordFromCache({ relPath, name, date, time, ticker, feature, ts }) {
+      return { file: null, relPath, name, date, time, ticker, feature, ts };
+    }
+
+    function recordToCache(r) {
+      return { relPath: r.relPath, name: r.name, date: r.date, time: r.time, ticker: r.ticker, feature: r.feature, ts: r.ts };
+    }
+
     function setStatus(text, kind = "info") {
       const prefix = kind === "error" ? "✗ " : kind === "ok" ? "✓ " : "• ";
       el.statusText.textContent = `${prefix}${text}`;
@@ -488,14 +524,36 @@
     }
 
     function updateFolderDisplay() {
-      if (state.hasFolderSelected && state.folderDisplayName) {
+      if (state.usingCache && state.folderDisplayName) {
+        // Has cache but not authorized yet
+        el.folderLabel.textContent = `📦 ${state.folderDisplayName} (快取)`;
+        el.folderLabel.classList.remove('hasFolder');
+        el.folderLabel.classList.add('cached');
+        el.authorizeBtn.style.display = 'inline-block';
+        el.pickFolderBtn.textContent = '更改資料夾';
+        el.pickFolderBtn.style.display = 'inline-block';
+        el.rescanBtn.style.display = 'none';
+        el.cacheNote.style.display = 'block';
+      } else if (state.hasFolderSelected && state.folderDisplayName) {
+        // Has folder access (authorized)
         el.folderLabel.textContent = `📁 ${state.folderDisplayName}`;
         el.folderLabel.classList.add('hasFolder');
-        el.pickFolderBtn.textContent = '更換資料夾';
+        el.folderLabel.classList.remove('cached');
+        el.authorizeBtn.style.display = 'none';
+        el.pickFolderBtn.textContent = '更改資料夾';
+        el.pickFolderBtn.style.display = 'inline-block';
+        el.rescanBtn.style.display = 'inline-block';
+        el.cacheNote.style.display = 'none';
       } else {
+        // No cache, no folder
         el.folderLabel.textContent = '尚未選擇資料夾';
         el.folderLabel.classList.remove('hasFolder');
+        el.folderLabel.classList.remove('cached');
+        el.authorizeBtn.style.display = 'none';
         el.pickFolderBtn.textContent = '選擇資料夾';
+        el.pickFolderBtn.style.display = 'inline-block';
+        el.rescanBtn.style.display = 'none';
+        el.cacheNote.style.display = 'none';
       }
     }
 
@@ -521,7 +579,7 @@
     function getFilteredByTicker() {
       const ticker = getSelectedTicker();
       if (!ticker) return [];
-      return state.files
+      return state.displayRecords
         .filter(r => r.ticker === ticker)
         .sort((a, b) => b.ts - a.ts || a.relPath.localeCompare(b.relPath));
     }
@@ -538,34 +596,141 @@
       else el.loadingOverlay.classList.remove('show');
     }
 
-    function saveScrollPosition() {
+
+    // -----------------------------
+    // IndexedDB (with fileCache store)
+    // -----------------------------
+    const idb = {
+      db: null,
+      async open() {
+        if (this.db) return this.db;
+        this.db = await new Promise((resolve, reject) => {
+          const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            // KV store for directory handle
+            if (!db.objectStoreNames.contains(KV_STORE)) {
+              db.createObjectStore(KV_STORE);
+            }
+            // File cache store for large record lists
+            if (!db.objectStoreNames.contains(CACHE_STORE)) {
+              db.createObjectStore(CACHE_STORE);
+            }
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        return this.db;
+      },
+      async get(store, key) {
+        const db = await this.open();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(store, 'readonly');
+          const s = tx.objectStore(store);
+          const req = s.get(key);
+          req.onsuccess = () => resolve(req.result ?? null);
+          req.onerror = () => reject(req.error);
+        });
+      },
+      async set(store, key, val) {
+        const db = await this.open();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(store, 'readwrite');
+          const s = tx.objectStore(store);
+          const req = s.put(val, key);
+          req.onsuccess = () => resolve(true);
+          req.onerror = () => reject(req.error);
+        });
+      },
+      async del(store, key) {
+        const db = await this.open();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(store, 'readwrite');
+          const s = tx.objectStore(store);
+          const req = s.delete(key);
+          req.onsuccess = () => resolve(true);
+          req.onerror = () => reject(req.error);
+        });
+      },
+      async clearStore(store) {
+        const db = await this.open();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(store, 'readwrite');
+          const s = tx.objectStore(store);
+          const req = s.clear();
+          req.onsuccess = () => resolve(true);
+          req.onerror = () => reject(req.error);
+        });
+      },
+    };
+
+    // -----------------------------
+    // File Cache (using IndexedDB)
+    // -----------------------------
+    const CHUNK_SIZE = 5000; // Records per chunk
+
+    async function saveFileCache(records, folderName) {
       try {
-        const iframeWin = el.viewerFrame.contentWindow;
-        if (iframeWin) {
-          state.scrollPosition.x = iframeWin.scrollX || 0;
-          state.scrollPosition.y = iframeWin.scrollY || 0;
+        // Clear old cache first
+        await idb.clearStore(CACHE_STORE);
+        
+        // Save folder name
+        await idb.set(CACHE_STORE, 'folderName', folderName);
+        
+        // Save record count
+        await idb.set(CACHE_STORE, 'recordCount', records.length);
+        
+        // Save records in chunks to avoid memory issues
+        const cacheRecords = records.map(recordToCache);
+        const chunkCount = Math.ceil(cacheRecords.length / CHUNK_SIZE);
+        await idb.set(CACHE_STORE, 'chunkCount', chunkCount);
+        
+        for (let i = 0; i < chunkCount; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, cacheRecords.length);
+          const chunk = cacheRecords.slice(start, end);
+          await idb.set(CACHE_STORE, `chunk_${i}`, chunk);
         }
+        
+        console.log(`File cache saved: ${records.length} records in ${chunkCount} chunks`);
+        return true;
       } catch (e) {
-        // Cross-origin or not loaded yet - ignore
+        console.error('Failed to save file cache to IndexedDB:', e);
+        setStatus(`快取儲存失敗：${e?.message || e}`, 'error');
+        return false;
       }
     }
 
-    function restoreScrollPosition() {
-      // Wait a bit for Plotly to render
-      setTimeout(() => {
-        try {
-          const iframeWin = el.viewerFrame.contentWindow;
-          if (iframeWin) {
-            iframeWin.scrollTo(state.scrollPosition.x, state.scrollPosition.y);
+    async function loadFileCache() {
+      try {
+        const folderName = await idb.get(CACHE_STORE, 'folderName');
+        if (!folderName) return null;
+        
+        const chunkCount = await idb.get(CACHE_STORE, 'chunkCount');
+        if (!chunkCount || chunkCount <= 0) return null;
+        
+        // Load all chunks
+        const allRecords = [];
+        for (let i = 0; i < chunkCount; i++) {
+          const chunk = await idb.get(CACHE_STORE, `chunk_${i}`);
+          if (chunk && Array.isArray(chunk)) {
+            allRecords.push(...chunk);
           }
-        } catch (e) {
-          // Cross-origin or not loaded yet - ignore
         }
-      }, 150);
+        
+        if (allRecords.length === 0) return null;
+        
+        const records = allRecords.map(parseRecordFromCache);
+        console.log(`File cache loaded: ${records.length} records from ${chunkCount} chunks`);
+        return { records, folderName };
+      } catch (e) {
+        console.error('Failed to load file cache from IndexedDB:', e);
+        return null;
+      }
     }
 
     // -----------------------------
-    // Recent Tickers
+    // Recent Tickers (localStorage - small data)
     // -----------------------------
     function loadRecentTickers() {
       try {
@@ -588,11 +753,8 @@
 
     function addRecentTicker(ticker) {
       if (!ticker) return;
-      // Remove if exists
       state.recentTickers = state.recentTickers.filter(t => t !== ticker);
-      // Add to front
       state.recentTickers.unshift(ticker);
-      // Keep only MAX
       if (state.recentTickers.length > MAX_RECENT_TICKERS) {
         state.recentTickers = state.recentTickers.slice(0, MAX_RECENT_TICKERS);
       }
@@ -606,36 +768,33 @@
         return;
       }
 
-      const availableTickers = new Set(state.files.map(r => r.ticker));
-      const hasFiles = state.files.length > 0;
+      const availableTickers = new Set(state.displayRecords.map(r => r.ticker));
+      const hasRecords = state.displayRecords.length > 0;
       const currentTicker = getSelectedTicker();
 
       el.recentTickers.innerHTML = `
         <div class="recentTickersLabel">常用：</div>
         ${state.recentTickers.map(t => {
-          const isAvailable = !hasFiles || availableTickers.has(t);
+          const isAvailable = !hasRecords || availableTickers.has(t);
           const isActive = t === currentTicker;
           const classes = ['btnTicker'];
           if (isActive) classes.push('active');
-          if (hasFiles && !availableTickers.has(t)) classes.push('unavailable');
+          if (hasRecords && !availableTickers.has(t)) classes.push('unavailable');
           return `<button class="${classes.join(' ')}" data-ticker="${escapeHtml(t)}" ${!isAvailable ? 'title="此 Ticker 不存在於目前資料夾"' : ''}>${escapeHtml(t)}</button>`;
         }).join('')}
       `;
 
-      // Add click handlers
       el.recentTickers.querySelectorAll('.btnTicker').forEach(btn => {
         btn.addEventListener('click', () => {
           const ticker = btn.dataset.ticker;
           if (!ticker) return;
           
-          // If no files loaded yet, just remember the selection
-          if (state.files.length === 0) {
+          if (state.displayRecords.length === 0) {
             setStatus('請先選擇資料夾載入檔案。', 'info');
             return;
           }
           
-          // Check if ticker exists in current files
-          const availableTickers = new Set(state.files.map(r => r.ticker));
+          const availableTickers = new Set(state.displayRecords.map(r => r.ticker));
           if (!availableTickers.has(ticker)) {
             setStatus(`Ticker "${ticker}" 不存在於目前資料夾。`, 'error');
             return;
@@ -670,7 +829,13 @@
 
     function updateTopStatus() {
       if (!state.tickerSelected) {
-        setStatus('請選擇 Ticker 開始瀏覽。', 'info');
+        if (state.usingCache) {
+          setStatus('使用快取清單。選擇資料夾後才能瀏覽檔案內容。', 'info');
+        } else if (state.displayRecords.length > 0) {
+          setStatus('請選擇 Ticker 開始瀏覽。', 'info');
+        } else {
+          setStatus('請先按「選擇資料夾」載入 HTML 存檔。', 'info');
+        }
         el.openNewTabBtn.disabled = true;
         el.fullscreenBtn.disabled = true;
         updatePageTitle(null);
@@ -694,9 +859,15 @@
         return;
       }
 
-      setStatus(`${r.date} ${r.time} · ${r.feature} · ${state.activeIndex + 1}/${state.filtered.length}`, 'ok');
-      el.openNewTabBtn.disabled = false;
-      el.fullscreenBtn.disabled = false;
+      if (state.usingCache) {
+        setStatus(`${r.date} ${r.time} · ${r.feature} · ${state.activeIndex + 1}/${state.filtered.length} (需選擇資料夾)`, 'info');
+        el.openNewTabBtn.disabled = true;
+        el.fullscreenBtn.disabled = true;
+      } else {
+        setStatus(`${r.date} ${r.time} · ${r.feature} · ${state.activeIndex + 1}/${state.filtered.length}`, 'ok');
+        el.openNewTabBtn.disabled = false;
+        el.fullscreenBtn.disabled = false;
+      }
       updatePageTitle(r);
     }
 
@@ -704,7 +875,7 @@
     // Actions
     // -----------------------------
     function rebuildTickerSelector() {
-      const tickers = Array.from(new Set(state.files.map(r => r.ticker))).sort((a, b) => a.localeCompare(b));
+      const tickers = Array.from(new Set(state.displayRecords.map(r => r.ticker))).sort((a, b) => a.localeCompare(b));
       fillSelect(el.tickerSel, tickers, { placeholder: "-- 請選擇 --" });
       el.tickerSel.value = "__PLACEHOLDER__";
       state.tickerSelected = false;
@@ -724,7 +895,9 @@
       state.filtered = getFilteredByTicker();
       state.activeIndex = -1;
 
-      // Add to recent tickers
+      // Rebuild feature index for fast navigation
+      rebuildFeatureIndex();
+
       if (ticker) {
         addRecentTicker(ticker);
       }
@@ -732,9 +905,13 @@
       rebuildDateAndFeatureSelectors();
 
       if (state.tickerSelected && state.filtered.length > 0) {
-        state.activeIndex = 0;
-        // Reset scroll position for new ticker
-        state.scrollPosition = { x: 0, y: 0 };
+        // Default to gamma feature if available
+        if (featureIndex['gamma'] && featureIndex['gamma'].length > 0) {
+          el.featureSel.value = 'gamma';
+          state.activeIndex = featureIndex['gamma'][0];
+        } else {
+          state.activeIndex = 0;
+        }
         openActive();
       } else {
         clearViewer();
@@ -744,7 +921,6 @@
       updateTopStatus();
       renderRecentTickers();
 
-      // Blur to allow keyboard navigation
       el.tickerSel.blur();
     }
 
@@ -757,7 +933,6 @@
         setActiveIndexFast(idx);
       }
 
-      // Blur to allow keyboard navigation
       el.dateSel.blur();
     }
 
@@ -783,7 +958,6 @@
         setActiveIndexFast(idx);
       }
 
-      // Blur to allow keyboard navigation
       el.featureSel.blur();
     }
 
@@ -801,8 +975,15 @@
     }
 
     function openRecord(record) {
-      // Save current scroll position before loading new content
-      saveScrollPosition();
+      if (state.usingCache || !record.file) {
+        const file = state.fileMap.get(record.relPath);
+        if (!file) {
+          clearViewer();
+          setStatus(`請先選擇資料夾以瀏覽 ${record.name}`, 'info');
+          return;
+        }
+        record.file = file;
+      }
 
       if (state.activeObjectUrl) {
         URL.revokeObjectURL(state.activeObjectUrl);
@@ -812,11 +993,6 @@
       try {
         const url = URL.createObjectURL(record.file);
         state.activeObjectUrl = url;
-
-        // Set up onload handler to restore scroll position
-        el.viewerFrame.onload = () => {
-          restoreScrollPosition();
-        };
 
         el.viewerFrame.src = url;
 
@@ -829,9 +1005,6 @@
         el.fullscreenBtn.disabled = false;
       } catch (e) {
         record.file.text().then(html => {
-          el.viewerFrame.onload = () => {
-            restoreScrollPosition();
-          };
           el.viewerFrame.srcdoc = html;
           state.newTabBlobUrl = null;
           el.openNewTabBtn.disabled = true;
@@ -857,22 +1030,45 @@
       openActive();
     }
 
+    async function initializeFromCache() {
+      try {
+        const cache = await loadFileCache();
+        if (!cache) return false;
+
+        state.cachedRecords = cache.records;
+        state.displayRecords = cache.records;
+        state.folderDisplayName = cache.folderName;
+        state.usingCache = true;
+        state.hasFolderSelected = false;
+
+        updateFolderDisplay();
+        rebuildTickerSelector();
+
+        setStatus(`已載入 ${cache.records.length} 筆快取。`, 'ok');
+        return true;
+      } catch (e) {
+        console.error('Failed to initialize from cache:', e);
+        return false;
+      }
+    }
+
     function clearAll() {
       state.files = [];
+      state.cachedRecords = [];
+      state.displayRecords = [];
       state.filtered = [];
       state.activeIndex = -1;
       state.folderDisplayName = "";
       state.tickerSelected = false;
       state.lastDirHandle = null;
       state.hasFolderSelected = false;
-      state.scrollPosition = { x: 0, y: 0 };
+      state.usingCache = false;
+      state.fileMap.clear();
       updateFolderDisplay();
       fillSelect(el.tickerSel, [], { placeholder: "-- 請選擇 --" });
       fillSelect(el.dateSel, [], { placeholder: "-- 選擇 --" });
       fillSelect(el.featureSel, [], { placeholder: "-- 選擇 --" });
-      el.rescanBtn.disabled = true;
       el.currentInfo.style.display = 'none';
-      // Don't clear recentTickers HTML - keep showing them
       renderRecentTickers();
       clearViewer();
       setStatus('請先按「選擇資料夾」載入 HTML 存檔。', 'info');
@@ -880,67 +1076,31 @@
     }
 
     // -----------------------------
-    // Persistence
+    // Directory Handle Persistence
     // -----------------------------
-    const idb = {
-      db: null,
-      async open() {
-        if (this.db) return this.db;
-        this.db = await new Promise((resolve, reject) => {
-          const req = indexedDB.open('gex_viewer', 1);
-          req.onupgradeneeded = () => {
-            const db = req.result;
-            if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
-          };
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => reject(req.error);
-        });
-        return this.db;
-      },
-      async get(key) {
-        const db = await this.open();
-        return await new Promise((resolve, reject) => {
-          const tx = db.transaction('kv', 'readonly');
-          const store = tx.objectStore('kv');
-          const req = store.get(key);
-          req.onsuccess = () => resolve(req.result ?? null);
-          req.onerror = () => reject(req.error);
-        });
-      },
-      async set(key, val) {
-        const db = await this.open();
-        return await new Promise((resolve, reject) => {
-          const tx = db.transaction('kv', 'readwrite');
-          const store = tx.objectStore('kv');
-          const req = store.put(val, key);
-          req.onsuccess = () => resolve(true);
-          req.onerror = () => reject(req.error);
-        });
-      },
-    };
-
     async function canUseDirectoryHandle() {
       return typeof window.showDirectoryPicker === 'function' && typeof FileSystemDirectoryHandle !== 'undefined';
     }
 
-    async function tryAutoReconnectOnLoad() {
+    async function tryAutoReconnectOnLoad(hasCachedData = false) {
       try {
         if (!(await canUseDirectoryHandle())) return;
-        const saved = await idb.get('lastDirHandle');
+        const saved = await idb.get(KV_STORE, 'lastDirHandle');
         if (!saved) return;
 
         const perm = await saved.queryPermission?.({ mode: 'read' });
-        state.folderDisplayName = saved.name || '';
-        state.hasFolderSelected = true;
-        updateFolderDisplay();
+        state.lastDirHandle = saved;
 
         if (perm === 'granted') {
-          await scanDirectoryHandle(saved);
-        } else {
-          setStatus('按「更換資料夾」或「重新掃描新增檔案」載入。', 'info');
-          state.lastDirHandle = saved;
-          el.rescanBtn.disabled = false;
+          setStatus('自動連結檔案中...', 'info');
+          // If we have cache, just link files; otherwise full scan
+          if (hasCachedData) {
+            await linkFilesToCachedRecords(saved);
+          } else {
+            await scanDirectoryHandle(saved);
+          }
         }
+        // If not granted, user will need to click "授權存取" button
       } catch {
         // ignore
       }
@@ -949,16 +1109,18 @@
     async function scanDirectoryHandle(dirHandle) {
       state.folderDisplayName = dirHandle?.name || '(資料夾)';
       state.hasFolderSelected = true;
+      state.usingCache = false;
       updateFolderDisplay();
       state.lastDirHandle = dirHandle;
 
       const records = [];
-      let skipped = 0;
       let scannedCount = 0;
 
       el.scanProgress.style.display = 'block';
       el.scanProgressText.textContent = '掃描中...';
       el.scanProgressFill.style.width = '0%';
+
+      state.fileMap.clear();
 
       async function walk(handle, prefix) {
         for await (const entry of handle.values()) {
@@ -970,12 +1132,13 @@
               el.scanProgressText.textContent = `已掃描 ${scannedCount} 個檔案...`;
               await new Promise(r => setTimeout(r, 0));
             }
-            if (!entry.name.toLowerCase().endsWith('.html')) { skipped++; continue; }
+            if (!entry.name.toLowerCase().endsWith('.html')) continue;
             const file = await entry.getFile();
             const relPath = `${prefix}${entry.name}`;
             const rec = parseRecordFromFileLike({ file, relPath, name: entry.name });
-            if (!rec) { skipped++; continue; }
+            if (!rec) continue;
             records.push(rec);
+            state.fileMap.set(relPath, file);
           }
         }
       }
@@ -990,6 +1153,10 @@
       }
 
       state.files = records.sort((a, b) => b.ts - a.ts || a.relPath.localeCompare(b.relPath));
+      state.displayRecords = state.files;
+
+      // Save to IndexedDB cache
+      await saveFileCache(state.files, state.folderDisplayName);
 
       rebuildTickerSelector();
       rebuildDateAndFeatureSelectors();
@@ -1000,7 +1167,6 @@
 
       updateCurrentInfo();
       updateTopStatus();
-      el.rescanBtn.disabled = false;
 
       setStatus(`已載入 ${state.files.length} 個 HTML。請選擇 Ticker。`, 'ok');
     }
@@ -1019,11 +1185,13 @@
       const rp = files[0].webkitRelativePath || "";
       state.folderDisplayName = rp ? rp.split('/')[0] : "(已選取)";
       state.hasFolderSelected = true;
+      state.usingCache = false;
       updateFolderDisplay();
       state.lastDirHandle = null;
 
+      state.fileMap.clear();
+
       const records = [];
-      let skipped = 0;
       const total = files.length;
 
       for (let i = 0; i < files.length; i++) {
@@ -1033,11 +1201,12 @@
           el.scanProgressFill.style.width = `${Math.round(i / total * 100)}%`;
           await new Promise(r => setTimeout(r, 0));
         }
-        if (!f.name.toLowerCase().endsWith('.html')) { skipped++; continue; }
+        if (!f.name.toLowerCase().endsWith('.html')) continue;
         const relPath = f.webkitRelativePath || f.name;
         const rec = parseRecordFromFileLike({ file: f, relPath, name: f.name });
-        if (!rec) { skipped++; continue; }
+        if (!rec) continue;
         records.push(rec);
+        state.fileMap.set(relPath, f);
       }
 
       el.scanProgress.style.display = 'none';
@@ -1048,6 +1217,10 @@
       }
 
       state.files = records.sort((a, b) => b.ts - a.ts || a.relPath.localeCompare(b.relPath));
+      state.displayRecords = state.files;
+
+      // Save to IndexedDB cache
+      await saveFileCache(state.files, state.folderDisplayName);
 
       rebuildTickerSelector();
       rebuildDateAndFeatureSelectors();
@@ -1058,20 +1231,158 @@
 
       updateCurrentInfo();
       updateTopStatus();
-      el.rescanBtn.disabled = true;
 
       setStatus(`已載入 ${state.files.length} 個 HTML。請選擇 Ticker。`, 'ok');
     }
 
     // -----------------------------
+    // Link files to cached records (fast, no re-parsing)
+    // -----------------------------
+    async function linkFilesToCachedRecords(dirHandle) {
+      state.folderDisplayName = dirHandle?.name || '(資料夾)';
+      state.hasFolderSelected = true;
+      state.usingCache = false;
+      updateFolderDisplay();
+      state.lastDirHandle = dirHandle;
+
+      el.scanProgress.style.display = 'block';
+      el.scanProgressText.textContent = '連結檔案中...';
+      el.scanProgressFill.style.width = '0%';
+
+      state.fileMap.clear();
+      let linkedCount = 0;
+      let scannedCount = 0;
+
+      // Build a set of relPaths we need
+      const neededPaths = new Set(state.displayRecords.map(r => r.relPath));
+
+      async function walk(handle, prefix) {
+        for await (const entry of handle.values()) {
+          if (entry.kind === 'directory') {
+            await walk(entry, `${prefix}${entry.name}/`);
+          } else if (entry.kind === 'file') {
+            scannedCount++;
+            if (scannedCount % 100 === 0) {
+              el.scanProgressText.textContent = `連結中... ${linkedCount}/${state.displayRecords.length}`;
+              await new Promise(r => setTimeout(r, 0));
+            }
+            if (!entry.name.toLowerCase().endsWith('.html')) continue;
+            const relPath = `${prefix}${entry.name}`;
+            if (neededPaths.has(relPath)) {
+              const file = await entry.getFile();
+              state.fileMap.set(relPath, file);
+              linkedCount++;
+            }
+          }
+        }
+      }
+
+      await walk(dirHandle, `${state.folderDisplayName}/`);
+
+      el.scanProgress.style.display = 'none';
+
+      // Update records to have file references
+      for (const r of state.displayRecords) {
+        const file = state.fileMap.get(r.relPath);
+        if (file) r.file = file;
+      }
+
+      if (linkedCount > 0) {
+        setStatus(`已連結 ${linkedCount} 個檔案，可開始瀏覽。`, 'ok');
+      } else {
+        setStatus(`連結失敗，請確認選擇正確的資料夾。`, 'error');
+      }
+      updateTopStatus();
+    }
+
+    async function linkFilesFromFileList(fileList) {
+      const files = Array.from(fileList || []);
+      if (files.length === 0) {
+        setStatus('你沒有選到任何檔案。', 'error');
+        return;
+      }
+
+      el.scanProgress.style.display = 'block';
+      el.scanProgressText.textContent = '連結檔案中...';
+      el.scanProgressFill.style.width = '0%';
+
+      const rp = files[0].webkitRelativePath || "";
+      state.folderDisplayName = rp ? rp.split('/')[0] : "(已選取)";
+      state.hasFolderSelected = true;
+      state.usingCache = false;
+      updateFolderDisplay();
+      state.lastDirHandle = null;
+
+      state.fileMap.clear();
+      const neededPaths = new Set(state.displayRecords.map(r => r.relPath));
+      let linkedCount = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (i % 100 === 0) {
+          el.scanProgressText.textContent = `連結中... ${linkedCount}/${state.displayRecords.length}`;
+          el.scanProgressFill.style.width = `${Math.round(i / files.length * 100)}%`;
+          await new Promise(r => setTimeout(r, 0));
+        }
+        if (!f.name.toLowerCase().endsWith('.html')) continue;
+        const relPath = f.webkitRelativePath || f.name;
+        if (neededPaths.has(relPath)) {
+          state.fileMap.set(relPath, f);
+          linkedCount++;
+        }
+      }
+
+      el.scanProgress.style.display = 'none';
+
+      for (const r of state.displayRecords) {
+        const file = state.fileMap.get(r.relPath);
+        if (file) r.file = file;
+      }
+
+      if (linkedCount > 0) {
+        setStatus(`已連結 ${linkedCount} 個檔案，可開始瀏覽。`, 'ok');
+      } else {
+        setStatus(`連結失敗，請確認選擇正確的資料夾。`, 'error');
+      }
+      updateTopStatus();
+    }
+
+    // -----------------------------
     // Events
     // -----------------------------
+    
+    // Authorize button: just get file access for cached records
+    el.authorizeBtn.addEventListener('click', async () => {
+      try {
+        if (await canUseDirectoryHandle()) {
+          const handle = await window.showDirectoryPicker({ mode: 'read' });
+          try {
+            await idb.set(KV_STORE, 'lastDirHandle', handle);
+          } catch {
+            // ignore
+          }
+          await linkFilesToCachedRecords(handle);
+          return;
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          setStatus('此環境無法使用目錄選取；改用本機選取。', 'info');
+        } else {
+          return;
+        }
+      }
+      // Fallback for file:// or unsupported browsers
+      el.dirInput.dataset.mode = 'authorize';
+      el.dirInput.click();
+    });
+
+    // Pick/Change folder button: always do full scan (new folder)
     el.pickFolderBtn.addEventListener('click', async () => {
       try {
         if (await canUseDirectoryHandle()) {
           const handle = await window.showDirectoryPicker({ mode: 'read' });
           try {
-            await idb.set('lastDirHandle', handle);
+            await idb.set(KV_STORE, 'lastDirHandle', handle);
           } catch {
             // ignore
           }
@@ -1085,25 +1396,38 @@
           return;
         }
       }
+      el.dirInput.dataset.mode = 'scan';
       el.dirInput.click();
     });
-    el.dirInput.addEventListener('change', (e) => scanFiles(e.target.files));
+
+    el.dirInput.addEventListener('change', async (e) => {
+      const mode = el.dirInput.dataset.mode || 'scan';
+      const hasCache = state.displayRecords.length > 0 && state.usingCache;
+      
+      if (mode === 'authorize' && hasCache) {
+        await linkFilesFromFileList(e.target.files);
+      } else {
+        await scanFiles(e.target.files);
+      }
+      
+      // Reset mode
+      el.dirInput.dataset.mode = 'scan';
+    });
 
     el.rescanBtn.addEventListener('click', async () => {
-      if (!state.lastDirHandle) {
-        setStatus('沒有可重新掃描的資料夾。請先選擇資料夾。', 'error');
-        return;
-      }
-      try {
-        const perm = await state.lastDirHandle.requestPermission?.({ mode: 'read' });
-        if (perm !== 'granted') {
-          setStatus('未授權讀取資料夾。', 'error');
-          return;
+      if (state.lastDirHandle) {
+        try {
+          const perm = await state.lastDirHandle.requestPermission?.({ mode: 'read' });
+          if (perm === 'granted') {
+            await scanDirectoryHandle(state.lastDirHandle);
+            return;
+          }
+        } catch (e) {
+          // Fall through to folder selection
         }
-        await scanDirectoryHandle(state.lastDirHandle);
-      } catch (e) {
-        setStatus(`重新掃描失敗：${e?.message || e}`, 'error');
       }
+      
+      el.pickFolderBtn.click();
     });
 
     el.tickerSel.addEventListener('change', onTickerChange);
@@ -1137,46 +1461,100 @@
       window.open(state.newTabBlobUrl, '_blank', 'noopener,noreferrer');
     });
 
+    // Pre-built indexes for fast navigation
+    let featureIndex = {}; // feature -> sorted array of indices in state.filtered
+    let allFeaturesSorted = [];
+
+    function rebuildFeatureIndex() {
+      featureIndex = {};
+      for (let i = 0; i < state.filtered.length; i++) {
+        const r = state.filtered[i];
+        if (!featureIndex[r.feature]) {
+          featureIndex[r.feature] = [];
+        }
+        featureIndex[r.feature].push(i);
+      }
+      allFeaturesSorted = Object.keys(featureIndex).sort((a, b) => a.localeCompare(b));
+    }
+
     document.addEventListener('keydown', (e) => {
       if (isTypingContext()) return;
-      if (!state.tickerSelected || state.filtered.length === 0) return;
+      if (!state.tickerSelected || state.filtered.length === 0 || state.activeIndex < 0) return;
+
+      const currRecord = state.filtered[state.activeIndex];
+      if (!currRecord) return;
 
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
+        // Navigate within same feature by date/time
+        const indices = featureIndex[currRecord.feature];
+        if (!indices || indices.length <= 1) return;
+        
+        const currPosInFeature = indices.indexOf(state.activeIndex);
+        if (currPosInFeature === -1) return;
+        
         const dir = e.key === 'ArrowUp' ? -1 : 1;
-        const nextIdx = (state.activeIndex + dir + state.filtered.length) % state.filtered.length;
-        setActiveIndexFast(nextIdx);
+        const nextPosInFeature = (currPosInFeature + dir + indices.length) % indices.length;
+        const nextIdx = indices[nextPosInFeature];
+        
+        state.activeIndex = nextIdx;
+        openActive();
         return;
       }
 
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
-        const currRecord = state.filtered[state.activeIndex];
-        if (!currRecord) return;
+        // Switch feature, find closest date/time
+        if (allFeaturesSorted.length <= 1) return;
 
-        const sameDateTime = state.filtered.filter(r => r.date === currRecord.date && r.time === currRecord.time);
-        const features = Array.from(new Set(sameDateTime.map(r => r.feature))).sort((a, b) => a.localeCompare(b));
-        if (features.length <= 1) return;
-
-        const currFeatureIdx = features.indexOf(currRecord.feature);
+        const currFeatureIdx = allFeaturesSorted.indexOf(currRecord.feature);
+        if (currFeatureIdx === -1) return;
+        
         const dir = e.key === 'ArrowLeft' ? -1 : 1;
-        const nextFeatureIdx = (currFeatureIdx + dir + features.length) % features.length;
-        const nextFeature = features[nextFeatureIdx];
+        const nextFeatureIdx = (currFeatureIdx + dir + allFeaturesSorted.length) % allFeaturesSorted.length;
+        const nextFeature = allFeaturesSorted[nextFeatureIdx];
 
-        const targetIdx = state.filtered.findIndex(r => 
-          r.date === currRecord.date && r.time === currRecord.time && r.feature === nextFeature
-        );
-        if (targetIdx !== -1) {
-          setActiveIndexFast(targetIdx);
+        // Find closest date/time in the new feature
+        const targetIndices = featureIndex[nextFeature];
+        if (!targetIndices || targetIndices.length === 0) return;
+
+        // Binary search for closest timestamp
+        const currTs = currRecord.ts;
+        let closestIdx = targetIndices[0];
+        let closestDiff = Math.abs(state.filtered[closestIdx].ts - currTs);
+        
+        for (const idx of targetIndices) {
+          const diff = Math.abs(state.filtered[idx].ts - currTs);
+          if (diff < closestDiff) {
+            closestDiff = diff;
+            closestIdx = idx;
+          }
         }
+
+        state.activeIndex = closestIdx;
+        el.featureSel.value = nextFeature;
+        openActive();
       }
     });
 
-    // Init
-    loadRecentTickers();
-    clearAll();
-    renderRecentTickers(); // Show recent tickers immediately
-    tryAutoReconnectOnLoad();
+    // -----------------------------
+    // Init (async)
+    // -----------------------------
+    (async function init() {
+      loadRecentTickers();
+      
+      // Try to load from IndexedDB cache first (instant for UI)
+      const hasCachedData = await initializeFromCache();
+      
+      if (!hasCachedData) {
+        clearAll();
+      }
+      
+      renderRecentTickers();
+      
+      // Try to auto-reconnect with saved directory handle
+      await tryAutoReconnectOnLoad(hasCachedData);
+    })();
   </script>
 </body>
 </html>
