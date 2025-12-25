@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>0DTE Gamma P/L Calculator</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600&display=swap');
+
+    :root {
+      --bg-primary: #0a0e14;
+      --bg-secondary: #121820;
+      --bg-tertiary: #1a222d;
+      --accent-cyan: #39bae6;
+      --accent-orange: #ff8f40;
+      --accent-green: #7fd962;
+      --accent-red: #f07178;
+      --accent-purple: #d2a6ff;
+      --text-primary: #e6e6e6;
+      --text-secondary: #8b949e;
+      --border-color: #2d3640;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      background-image: 
+        radial-gradient(ellipse at 20% 20%, rgba(57, 186, 230, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(210, 166, 255, 0.06) 0%, transparent 50%);
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 600;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 2rem;
+    }
+
+    .panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--accent-cyan);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .panel-title::before {
+      content: '';
+      width: 3px;
+      height: 16px;
+      background: var(--accent-cyan);
+      border-radius: 2px;
+    }
+
+    .input-group {
+      margin-bottom: 1rem;
+    }
+
+    .input-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.35rem;
+      font-weight: 500;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 0 3px rgba(57, 186, 230, 0.15);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 140px;
+    }
+
+    .btn {
+      padding: 0.7rem 1.2rem;
+      border: none;
+      border-radius: 6px;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-cyan), #2d9fc7);
+      color: var(--bg-primary);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(57, 186, 230, 0.3);
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--accent-cyan);
+    }
+
+    .btn-danger {
+      background: rgba(240, 113, 120, 0.15);
+      color: var(--accent-red);
+      border: 1px solid rgba(240, 113, 120, 0.3);
+    }
+
+    .btn-danger:hover {
+      background: rgba(240, 113, 120, 0.25);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .snapshot-list {
+      margin-top: 1rem;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+
+    .snapshot-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg-tertiary);
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+      font-size: 0.8rem;
+    }
+
+    .snapshot-time {
+      color: var(--accent-orange);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .snapshot-info {
+      color: var(--text-secondary);
+    }
+
+    .snapshot-delete {
+      background: none;
+      border: none;
+      color: var(--accent-red);
+      cursor: pointer;
+      padding: 0.2rem;
+      opacity: 0.7;
+    }
+
+    .snapshot-delete:hover {
+      opacity: 1;
+    }
+
+    .status-bar {
+      padding: 0.6rem 0.8rem;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+    }
+
+    .status-success {
+      color: var(--accent-green);
+      border-left: 3px solid var(--accent-green);
+    }
+
+    .status-error {
+      color: var(--accent-red);
+      border-left: 3px solid var(--accent-red);
+    }
+
+    .status-info {
+      color: var(--text-secondary);
+      border-left: 3px solid var(--border-color);
+    }
+
+    #chart-container {
+      min-height: 500px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+    }
+
+    .results-panel {
+      margin-top: 1.5rem;
+    }
+
+    .breakeven-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .breakeven-tag {
+      padding: 0.4rem 0.8rem;
+      background: rgba(127, 217, 98, 0.15);
+      border: 1px solid rgba(127, 217, 98, 0.3);
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: var(--accent-green);
+    }
+
+    .zone-item {
+      padding: 0.5rem 0.75rem;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .zone-profit {
+      background: rgba(127, 217, 98, 0.1);
+      border-left: 3px solid var(--accent-green);
+      color: var(--accent-green);
+    }
+
+    .zone-loss {
+      background: rgba(240, 113, 120, 0.1);
+      border-left: 3px solid var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border-color);
+      margin: 1.25rem 0;
+    }
+
+    @media (max-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>0DTE Gamma P/L Calculator</h1>
+      <p>SPX/SPY 選擇權 — 輸入 Gamma/GEX 表，視覺化從現在到收盤的 P/L 變化</p>
+    </header>
+
+    <div class="main-grid">
+      <!-- Left Panel: Inputs -->
+      <div class="left-column">
+        <div class="panel">
+          <div class="panel-title">市場參數</div>
+          
+          <div class="input-group">
+            <label for="s0">S0 (開盤現價)</label>
+            <input type="number" id="s0" value="6920" step="0.01">
+          </div>
+
+          <div class="input-row">
+            <div class="input-group">
+              <label for="iv0">IV0 (開盤 IV %)</label>
+              <input type="number" id="iv0" value="15" step="0.1">
+            </div>
+            <div class="input-group">
+              <label for="ivNow">IVnow (目前 IV %)</label>
+              <input type="number" id="ivNow" value="14" step="0.1">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="input-group">
+              <label for="ivClose">IVclose (預期收盤 IV %)</label>
+              <input type="number" id="ivClose" value="12" step="0.1">
+            </div>
+            <div class="input-group">
+              <label for="timeNow">現在時間 (ET, HH:MM)</label>
+              <input type="text" id="timeNow" value="10:30" placeholder="10:30">
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top: 1rem;">
+          <div class="panel-title">Gamma/GEX 輸入</div>
+          
+          <div class="input-group">
+            <label for="gexUnit">數值單位</label>
+            <select id="gexUnit">
+              <option value="million" selected>Million (M)</option>
+              <option value="raw">原始值 (Raw)</option>
+              <option value="billion">Billion (B)</option>
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label for="gammaInput">Gamma/GEX JSON (Ctrl+V 貼上)</label>
+            <textarea id="gammaInput" placeholder='[
+  {"strike": 6920, "gex": 3656.05},
+  {"strike": 6925, "gex": 3403.09},
+  ...
+]'></textarea>
+          </div>
+
+          <div id="parseStatus" class="status-bar status-info">尚未輸入 Gamma 資料</div>
+
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="addSnapshot()">加入 Gamma 快照</button>
+            <button class="btn btn-danger" onclick="clearSnapshots()">清除全部</button>
+          </div>
+
+          <div class="snapshot-list" id="snapshotList"></div>
+        </div>
+
+        <div class="panel" style="margin-top: 1rem;">
+          <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="generateCurves()">
+            生成 P/L 曲線
+          </button>
+        </div>
+
+        <!-- Results Panel -->
+        <div class="panel results-panel" id="resultsPanel" style="display: none; margin-top: 1rem;">
+          <div class="panel-title">Break-even 分析（當下曲線）</div>
+          
+          <div>
+            <label>Break-even 點位</label>
+            <div class="breakeven-list" id="breakevenList"></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div>
+            <label>獲利區間 (P/L > 0)</label>
+            <div id="profitZones"></div>
+          </div>
+
+          <div style="margin-top: 0.75rem;">
+            <label>虧損區間 (P/L < 0)</label>
+            <div id="lossZones"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Chart -->
+      <div class="panel">
+        <div class="panel-title">P/L 曲線（每小時切片）</div>
+        <div id="chart-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // === Global State ===
+    const state = {
+      snapshots: [],  // [{time: "10:30", gammaTable: [...]}]
+      parsedGamma: null
+    };
+
+    // === Constants ===
+    const MARKET_OPEN = 9 * 60 + 30;   // 09:30 in minutes
+    const MARKET_CLOSE = 16 * 60;      // 16:00 in minutes
+    const MINUTES_PER_YEAR = 365.25 * 24 * 60;
+
+    // === Utility Functions ===
+    function timeToMinutes(timeStr) {
+      const [h, m] = timeStr.split(':').map(Number);
+      return h * 60 + (m || 0);
+    }
+
+    function minutesToTime(mins) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    }
+
+    function getUnitMultiplier() {
+      const unit = document.getElementById('gexUnit').value;
+      if (unit === 'million') return 1e6;
+      if (unit === 'billion') return 1e9;
+      return 1;
+    }
+
+    // === Parse Gamma Table ===
+    function parseGammaTable(rawText) {
+      let text = (rawText ?? "").trim();
+      if (!text) return null;
+
+      // Remove code fences if present
+      text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+
+      const arr = JSON.parse(text);
+      if (!Array.isArray(arr)) throw new Error("需要是 JSON array");
+
+      const multiplier = getUnitMultiplier();
+
+      const rows = arr.map((r, idx) => {
+        const strike = Number(r.strike);
+        const val = r.gex ?? r.gamma;
+        const gamma = Number(val) * multiplier;
+
+        if (!Number.isFinite(strike)) throw new Error(`第 ${idx + 1} 筆 strike 不是數字`);
+        if (!Number.isFinite(gamma)) throw new Error(`第 ${idx + 1} 筆 gex/gamma 不是數字`);
+
+        return { strike, gamma };
+      });
+
+      // Sort by strike
+      rows.sort((a, b) => a.strike - b.strike);
+
+      // Merge duplicate strikes
+      const merged = [];
+      for (const row of rows) {
+        const last = merged[merged.length - 1];
+        if (last && last.strike === row.strike) last.gamma += row.gamma;
+        else merged.push({ ...row });
+      }
+
+      return merged;
+    }
+
+    // === Gamma Input Handler ===
+    document.getElementById('gammaInput').addEventListener('input', function() {
+      const statusEl = document.getElementById('parseStatus');
+      try {
+        const parsed = parseGammaTable(this.value);
+        if (!parsed || parsed.length === 0) {
+          statusEl.className = 'status-bar status-info';
+          statusEl.textContent = '尚未輸入 Gamma 資料';
+          state.parsedGamma = null;
+          return;
+        }
+
+        state.parsedGamma = parsed;
+        const minStrike = parsed[0].strike;
+        const maxStrike = parsed[parsed.length - 1].strike;
+        statusEl.className = 'status-bar status-success';
+        statusEl.textContent = `✓ 解析成功：${parsed.length} 筆，strike ${minStrike} ~ ${maxStrike}`;
+      } catch (e) {
+        statusEl.className = 'status-bar status-error';
+        statusEl.textContent = `✗ 解析失敗：${e.message}`;
+        state.parsedGamma = null;
+      }
+    });
+
+    // === Snapshot Management ===
+    function addSnapshot() {
+      if (!state.parsedGamma || state.parsedGamma.length === 0) {
+        alert('請先貼上有效的 Gamma 資料');
+        return;
+      }
+
+      const timeNow = document.getElementById('timeNow').value.trim();
+      if (!/^\d{1,2}:\d{2}$/.test(timeNow)) {
+        alert('時間格式不正確，請使用 HH:MM（例如 10:30）');
+        return;
+      }
+
+      // Check for duplicate time
+      const existingIdx = state.snapshots.findIndex(s => s.time === timeNow);
+      if (existingIdx >= 0) {
+        state.snapshots[existingIdx].gammaTable = [...state.parsedGamma];
+      } else {
+        state.snapshots.push({
+          time: timeNow,
+          gammaTable: [...state.parsedGamma]
+        });
+        // Sort by time
+        state.snapshots.sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+      }
+
+      renderSnapshots();
+    }
+
+    function removeSnapshot(idx) {
+      state.snapshots.splice(idx, 1);
+      renderSnapshots();
+    }
+
+    function clearSnapshots() {
+      state.snapshots = [];
+      renderSnapshots();
+    }
+
+    function renderSnapshots() {
+      const container = document.getElementById('snapshotList');
+      if (state.snapshots.length === 0) {
+        container.innerHTML = '<div class="status-bar status-info">尚無快照</div>';
+        return;
+      }
+
+      container.innerHTML = state.snapshots.map((s, idx) => {
+        const minS = s.gammaTable[0].strike;
+        const maxS = s.gammaTable[s.gammaTable.length - 1].strike;
+        return `
+          <div class="snapshot-item">
+            <span class="snapshot-time">${s.time} ET</span>
+            <span class="snapshot-info">${s.gammaTable.length} 筆 (${minS}~${maxS})</span>
+            <button class="snapshot-delete" onclick="removeSnapshot(${idx})">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // === Gamma Interpolation ===
+    function interpolateGamma(S, gammaTable) {
+      if (!gammaTable || gammaTable.length === 0) return 0;
+      if (gammaTable.length === 1) return gammaTable[0].gamma;
+
+      const minStrike = gammaTable[0].strike;
+      const maxStrike = gammaTable[gammaTable.length - 1].strike;
+
+      // Outside range: return 0
+      if (S <= minStrike || S >= maxStrike) return 0;
+
+      // Find bracketing points
+      let i = 0;
+      while (i < gammaTable.length - 1 && gammaTable[i + 1].strike < S) i++;
+
+      const s0 = gammaTable[i].strike;
+      const s1 = gammaTable[i + 1].strike;
+      const g0 = gammaTable[i].gamma;
+      const g1 = gammaTable[i + 1].gamma;
+
+      // Linear interpolation
+      const t = (S - s0) / (s1 - s0);
+      return g0 + t * (g1 - g0);
+    }
+
+    // === Numerical Integration (Trapezoidal) ===
+    function integrate(fn, a, b, n = 500) {
+      const h = (b - a) / n;
+      let sum = 0.5 * (fn(a) + fn(b));
+      for (let i = 1; i < n; i++) {
+        sum += fn(a + i * h);
+      }
+      return sum * h;
+    }
+
+    // === P/L Calculation ===
+    function calculatePnL(S, S0, gammaTable, IV0, IVi, Ti) {
+      // Delta at S: integral of gamma from S0 to S
+      const delta = integrate(x => interpolateGamma(x, gammaTable), S0, S, 200);
+
+      // P/L_price: integral of delta from S0 to S
+      // We approximate by integrating delta(x) from S0 to S
+      const pnlPrice = integrate(x => {
+        const d = integrate(u => interpolateGamma(u, gammaTable), S0, x, 100);
+        return d;
+      }, S0, S, 200);
+
+      // Vega approximation: S^2 * sigma * T * gamma
+      // P/L_vol = Vega(S) * (IVi - IV0)
+      const sigma_mid = (IV0 + IVi) / 2;
+      const gamma_S = interpolateGamma(S, gammaTable);
+      const vega = S * S * sigma_mid * Ti * gamma_S;
+      const pnlVol = vega * (IVi - IV0);
+
+      return pnlPrice + pnlVol;
+    }
+
+    // === Find Break-even Points ===
+    function findBreakevens(sGrid, pnlGrid) {
+      const breakevens = [];
+      for (let i = 0; i < pnlGrid.length - 1; i++) {
+        if (pnlGrid[i] * pnlGrid[i + 1] < 0) {
+          // Sign change: linear interpolation to find root
+          const s0 = sGrid[i], s1 = sGrid[i + 1];
+          const p0 = pnlGrid[i], p1 = pnlGrid[i + 1];
+          const sRoot = s0 - p0 * (s1 - s0) / (p1 - p0);
+          breakevens.push(sRoot);
+        }
+      }
+      return breakevens;
+    }
+
+    // === Find Profit/Loss Zones ===
+    function findZones(sGrid, pnlGrid, breakevens) {
+      const allPoints = [sGrid[0], ...breakevens, sGrid[sGrid.length - 1]].sort((a, b) => a - b);
+      const profitZones = [];
+      const lossZones = [];
+
+      for (let i = 0; i < allPoints.length - 1; i++) {
+        const mid = (allPoints[i] + allPoints[i + 1]) / 2;
+        // Find pnl at mid
+        const idx = sGrid.findIndex(s => s >= mid);
+        const pnlMid = idx >= 0 ? pnlGrid[Math.max(0, idx - 1)] : 0;
+
+        const zone = { from: allPoints[i], to: allPoints[i + 1] };
+        if (pnlMid > 0) profitZones.push(zone);
+        else lossZones.push(zone);
+      }
+
+      return { profitZones, lossZones };
+    }
+
+    // === Main: Generate Curves ===
+    function generateCurves() {
+      // Get inputs
+      const S0 = parseFloat(document.getElementById('s0').value);
+      const IV0 = parseFloat(document.getElementById('iv0').value) / 100;
+      const IVnow = parseFloat(document.getElementById('ivNow').value) / 100;
+      const IVclose = parseFloat(document.getElementById('ivClose').value) / 100;
+      const timeNowStr = document.getElementById('timeNow').value.trim();
+
+      // Validate
+      if (!Number.isFinite(S0) || S0 <= 0) {
+        alert('請輸入有效的 S0');
+        return;
+      }
+
+      const timeNowMins = timeToMinutes(timeNowStr);
+      if (timeNowMins < MARKET_OPEN || timeNowMins >= MARKET_CLOSE) {
+        alert('時間需在 09:30 ~ 16:00 ET 之間');
+        return;
+      }
+
+      // Get gamma table (use latest snapshot or current input)
+      let baseGammaTable = state.parsedGamma;
+      if (state.snapshots.length > 0) {
+        // Use the latest snapshot as fallback
+        baseGammaTable = state.snapshots[state.snapshots.length - 1].gammaTable;
+      }
+
+      if (!baseGammaTable || baseGammaTable.length === 0) {
+        alert('請先輸入 Gamma 資料或加入快照');
+        return;
+      }
+
+      // Generate time slices (every hour from now to close)
+      const slices = [];
+      let t = Math.ceil(timeNowMins / 60) * 60; // Round up to next hour
+      if (t === timeNowMins) t += 60;
+
+      // Add "now" as first slice
+      slices.push({ mins: timeNowMins, label: `${timeNowStr} (now)` });
+
+      while (t <= MARKET_CLOSE) {
+        slices.push({ mins: t, label: minutesToTime(t) });
+        t += 60;
+      }
+
+      // Make sure close is included
+      if (slices[slices.length - 1].mins !== MARKET_CLOSE) {
+        slices.push({ mins: MARKET_CLOSE, label: '16:00 (close)' });
+      }
+
+      // S grid
+      const minStrike = baseGammaTable[0].strike;
+      const maxStrike = baseGammaTable[baseGammaTable.length - 1].strike;
+      const buffer = Math.max(50, Math.round(S0 * 0.015));
+      const sMin = Math.min(minStrike, S0) - buffer;
+      const sMax = Math.max(maxStrike, S0) + buffer;
+      const sGrid = [];
+      const numPoints = 501;
+      for (let i = 0; i < numPoints; i++) {
+        sGrid.push(sMin + (sMax - sMin) * i / (numPoints - 1));
+      }
+
+      // Time remaining at open (minutes until close)
+      const T_open_mins = MARKET_CLOSE - MARKET_OPEN;  // 390 minutes
+
+      // For each slice, calculate P/L curve
+      const traces = [];
+      let nowPnlGrid = null;
+      let nowSGrid = null;
+
+      slices.forEach((slice, idx) => {
+        // Find gamma table for this slice
+        let gammaTable = baseGammaTable;
+        if (state.snapshots.length > 0) {
+          // Find most recent snapshot <= slice time
+          for (let i = state.snapshots.length - 1; i >= 0; i--) {
+            if (timeToMinutes(state.snapshots[i].time) <= slice.mins) {
+              gammaTable = state.snapshots[i].gammaTable;
+              break;
+            }
+          }
+        }
+
+        // Time remaining at this slice (in years)
+        const T_remaining_mins = MARKET_CLOSE - slice.mins;
+        const Ti = T_remaining_mins / MINUTES_PER_YEAR;
+
+        // IV at this slice (linear interpolation from IVnow to IVclose)
+        const totalMinsToClose = MARKET_CLOSE - timeNowMins;
+        const minsFromNow = slice.mins - timeNowMins;
+        const IVi = totalMinsToClose > 0 
+          ? IVnow + (IVclose - IVnow) * (minsFromNow / totalMinsToClose)
+          : IVclose;
+
+        // Calculate P/L for each S
+        const pnlGrid = sGrid.map(S => calculatePnL(S, S0, gammaTable, IV0, IVi, Ti));
+
+        // Opacity: fades as time approaches close
+        const opacity = 0.3 + 0.7 * (T_remaining_mins / T_open_mins);
+
+        // Color gradient from cyan (now) to purple (close)
+        const hue = 190 + (idx / slices.length) * 80;  // 190 (cyan) to 270 (purple)
+
+        traces.push({
+          x: sGrid,
+          y: pnlGrid,
+          type: 'scatter',
+          mode: 'lines',
+          name: slice.label,
+          line: {
+            color: `hsla(${hue}, 70%, 60%, ${opacity})`,
+            width: idx === 0 ? 3 : 1.5
+          }
+        });
+
+        if (idx === 0) {
+          nowPnlGrid = pnlGrid;
+          nowSGrid = sGrid;
+        }
+      });
+
+      // Add S0 vertical line
+      traces.push({
+        x: [S0, S0],
+        y: [Math.min(...traces[0].y) * 1.1, Math.max(...traces[0].y) * 1.1],
+        type: 'scatter',
+        mode: 'lines',
+        name: `S0 = ${S0}`,
+        line: { color: '#ff8f40', width: 2, dash: 'dash' }
+      });
+
+      // Add zero line
+      traces.push({
+        x: [sMin, sMax],
+        y: [0, 0],
+        type: 'scatter',
+        mode: 'lines',
+        name: 'P/L = 0',
+        line: { color: '#4a5568', width: 1 },
+        showlegend: false
+      });
+
+      // Find break-evens for "now" curve
+      const breakevens = findBreakevens(nowSGrid, nowPnlGrid);
+      const { profitZones, lossZones } = findZones(nowSGrid, nowPnlGrid, breakevens);
+
+      // Add break-even markers
+      breakevens.forEach((be, i) => {
+        traces.push({
+          x: [be],
+          y: [0],
+          type: 'scatter',
+          mode: 'markers+text',
+          name: `BE ${i + 1}`,
+          marker: { color: '#7fd962', size: 12, symbol: 'diamond' },
+          text: [be.toFixed(1)],
+          textposition: 'top center',
+          textfont: { color: '#7fd962', size: 11 }
+        });
+      });
+
+      // Plot
+      const layout = {
+        paper_bgcolor: '#1a222d',
+        plot_bgcolor: '#1a222d',
+        font: { color: '#e6e6e6', family: 'Outfit, sans-serif' },
+        title: {
+          text: `P/L 曲線：${timeNowStr} ET → 16:00 ET`,
+          font: { size: 16 }
+        },
+        xaxis: {
+          title: 'S (指數點位)',
+          gridcolor: '#2d3640',
+          zerolinecolor: '#4a5568'
+        },
+        yaxis: {
+          title: 'P/L (相對值)',
+          gridcolor: '#2d3640',
+          zerolinecolor: '#4a5568'
+        },
+        legend: {
+          x: 1.02,
+          y: 1,
+          bgcolor: 'rgba(26, 34, 45, 0.8)'
+        },
+        margin: { t: 50, r: 150 },
+        hovermode: 'x unified'
+      };
+
+      Plotly.newPlot('chart-container', traces, layout, { responsive: true });
+
+      // Update results panel
+      document.getElementById('resultsPanel').style.display = 'block';
+
+      // Break-evens
+      const beList = document.getElementById('breakevenList');
+      if (breakevens.length === 0) {
+        beList.innerHTML = '<span style="color: var(--text-secondary)">無（整條曲線同正負）</span>';
+      } else {
+        beList.innerHTML = breakevens.map(be => 
+          `<span class="breakeven-tag">${be.toFixed(2)}</span>`
+        ).join('');
+      }
+
+      // Profit zones
+      const profitEl = document.getElementById('profitZones');
+      if (profitZones.length === 0) {
+        profitEl.innerHTML = '<div class="zone-item zone-loss">無獲利區間</div>';
+      } else {
+        profitEl.innerHTML = profitZones.map(z => {
+          const fromStr = z.from <= sMin + 1 ? '-∞' : z.from.toFixed(1);
+          const toStr = z.to >= sMax - 1 ? '+∞' : z.to.toFixed(1);
+          return `<div class="zone-item zone-profit">${fromStr} ~ ${toStr}</div>`;
+        }).join('');
+      }
+
+      // Loss zones
+      const lossEl = document.getElementById('lossZones');
+      if (lossZones.length === 0) {
+        lossEl.innerHTML = '<div class="zone-item zone-profit">無虧損區間</div>';
+      } else {
+        lossEl.innerHTML = lossZones.map(z => {
+          const fromStr = z.from <= sMin + 1 ? '-∞' : z.from.toFixed(1);
+          const toStr = z.to >= sMax - 1 ? '+∞' : z.to.toFixed(1);
+          return `<div class="zone-item zone-loss">${fromStr} ~ ${toStr}</div>`;
+        }).join('');
+      }
+    }
+
+    // Initialize
+    renderSnapshots();
+  </script>
+</body>
+</html>
+
