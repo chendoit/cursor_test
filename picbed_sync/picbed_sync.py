@@ -21,6 +21,7 @@ import base64
 import uuid
 import argparse
 import time
+import logging
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -35,6 +36,7 @@ from dotenv import dotenv_values
 # ============================================
 ENV_FILE = ".picbed_env"
 PROCESSED_FILE = ".picbed_processed.json"
+LOG_FILE = "picbed_sync.log"
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com"
 
@@ -68,21 +70,57 @@ CONTENT_TYPE_MAP = {
 
 
 # ============================================
+# Logging 設定
+# ============================================
+def setup_logging(verbose: bool = False):
+    """設定 logging"""
+    # 建立 logger
+    logger = logging.getLogger('picbed_sync')
+    logger.setLevel(logging.DEBUG)
+    
+    # 清除既有的 handlers
+    logger.handlers.clear()
+    
+    # 檔案 handler - 記錄所有等級
+    file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_format = logging.Formatter(
+        '%(asctime)s | %(levelname)-8s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(file_format)
+    logger.addHandler(file_handler)
+    
+    # Console handler - 根據 verbose 決定等級
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console_format = logging.Formatter('%(message)s')
+    console_handler.setFormatter(console_format)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+
+# 全域 logger（在 main 中初始化）
+logger = logging.getLogger('picbed_sync')
+
+
+# ============================================
 # 工具函數
 # ============================================
 def load_config() -> Dict[str, str]:
     """載入設定檔"""
     env_path = Path(ENV_FILE)
     if not env_path.exists():
-        print(f"錯誤：找不到設定檔 {ENV_FILE}")
-        print(f"請複製 {ENV_FILE}.example 為 {ENV_FILE} 並填入設定")
+        logger.error(f"找不到設定檔 {ENV_FILE}")
+        logger.error(f"請複製 {ENV_FILE}.example 為 {ENV_FILE} 並填入設定")
         exit(1)
     
     config = dotenv_values(env_path)
     
     # 驗證必要設定
     if not config.get('GITHUB_TOKEN'):
-        print("錯誤：GITHUB_TOKEN 未設定")
+        logger.error("GITHUB_TOKEN 未設定")
         exit(1)
     
     return config
@@ -97,7 +135,7 @@ def get_picbed_repos(config: Dict[str, str]) -> List[str]:
             repos.append(config[key])
     
     if not repos:
-        print("錯誤：未設定任何 PICBED_REPO_xxx")
+        logger.error("未設定任何 PICBED_REPO_xxx")
         exit(1)
     
     return repos
@@ -113,10 +151,10 @@ def get_folders(config: Dict[str, str]) -> List[str]:
             if Path(folder).exists():
                 folders.append(folder)
             else:
-                print(f"警告：目錄不存在，跳過 - {folder}")
+                logger.warning(f"目錄不存在，跳過 - {folder}")
     
     if not folders:
-        print("錯誤：未設定任何有效的 FOLDER_xxx")
+        logger.error("未設定任何有效的 FOLDER_xxx")
         exit(1)
     
     return folders
@@ -130,7 +168,7 @@ def load_processed_data() -> Dict:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            print(f"警告：{PROCESSED_FILE} 格式錯誤，將重新建立")
+            logger.warning(f"{PROCESSED_FILE} 格式錯誤，將重新建立")
     
     return {"files": {}, "url_mapping": {}}
 
@@ -201,10 +239,10 @@ class GitHubClient:
             if resp.status_code == 200:
                 return resp.json().get('size', 0)
             else:
-                print(f"警告：無法取得 {repo} 的資訊 - {resp.status_code}")
+                logger.warning(f"無法取得 {repo} 的資訊 - {resp.status_code}")
                 return None
         except Exception as e:
-            print(f"錯誤：取得 repo 資訊失敗 - {e}")
+            logger.error(f"取得 repo 資訊失敗 - {e}")
             return None
     
     def upload_file(self, repo: str, branch: str, path: str, 
@@ -238,10 +276,10 @@ class GitHubClient:
                         if resp.status_code == 200:
                             return f"{GITHUB_RAW_BASE}/{repo}/{branch}/{path}"
                 
-                print(f"警告：上傳失敗 (嘗試 {attempt + 1}/{MAX_RETRIES}) - {resp.status_code}: {resp.text[:200]}")
+                logger.warning(f"上傳失敗 (嘗試 {attempt + 1}/{MAX_RETRIES}) - {resp.status_code}: {resp.text[:200]}")
                 
             except Exception as e:
-                print(f"錯誤：上傳時發生異常 (嘗試 {attempt + 1}/{MAX_RETRIES}) - {e}")
+                logger.error(f"上傳時發生異常 (嘗試 {attempt + 1}/{MAX_RETRIES}) - {e}")
             
             if attempt < MAX_RETRIES - 1:
                 time.sleep(API_DELAY * 2)
@@ -315,7 +353,7 @@ def download_image(url: str) -> Optional[Tuple[bytes, str]]:
                 
                 # 檢查檔案大小
                 if len(content) > MAX_FILE_SIZE:
-                    print(f"警告：圖片過大 ({len(content) / 1024 / 1024:.1f} MB)，跳過 - {url}")
+                    logger.warning(f"圖片過大 ({len(content) / 1024 / 1024:.1f} MB)，跳過 - {url}")
                     return None
                 
                 # 取得副檔名
@@ -328,10 +366,10 @@ def download_image(url: str) -> Optional[Tuple[bytes, str]]:
                 
                 return (content, ext)
             
-            print(f"警告：下載失敗 (嘗試 {attempt + 1}/{MAX_RETRIES}) - HTTP {resp.status_code}")
+            logger.warning(f"下載失敗 (嘗試 {attempt + 1}/{MAX_RETRIES}) - HTTP {resp.status_code}")
             
         except Exception as e:
-            print(f"錯誤：下載時發生異常 (嘗試 {attempt + 1}/{MAX_RETRIES}) - {e}")
+            logger.error(f"下載時發生異常 (嘗試 {attempt + 1}/{MAX_RETRIES}) - {e}")
         
         if attempt < MAX_RETRIES - 1:
             time.sleep(1)
@@ -350,24 +388,24 @@ def read_local_image(base_path: str, relative_path: str) -> Optional[Tuple[bytes
     full_path = Path(base_path).parent / relative_path
     
     if not full_path.exists():
-        print(f"警告：本地圖片不存在 - {full_path}")
+        logger.warning(f"本地圖片不存在 - {full_path}")
         return None
     
     ext = full_path.suffix.lower()
     if ext not in IMAGE_EXTENSIONS:
-        print(f"警告：不支援的圖片格式 - {ext}")
+        logger.warning(f"不支援的圖片格式 - {ext}")
         return None
     
     try:
         content = full_path.read_bytes()
         
         if len(content) > MAX_FILE_SIZE:
-            print(f"警告：圖片過大 ({len(content) / 1024 / 1024:.1f} MB)，跳過 - {full_path}")
+            logger.warning(f"圖片過大 ({len(content) / 1024 / 1024:.1f} MB)，跳過 - {full_path}")
             return None
         
         return (content, ext)
     except Exception as e:
-        print(f"錯誤：讀取本地圖片失敗 - {e}")
+        logger.error(f"讀取本地圖片失敗 - {e}")
         return None
 
 
@@ -376,9 +414,9 @@ def read_local_image(base_path: str, relative_path: str) -> Optional[Tuple[bytes
 # ============================================
 def check_repo_status(github: GitHubClient, repos: List[str], current_index: int):
     """檢查並顯示所有 repo 的容量狀態"""
-    print("=" * 50)
-    print("PicBed Repo 容量狀態")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("PicBed Repo 容量狀態")
+    logger.info("=" * 50)
     
     for i, repo in enumerate(repos):
         size_kb = github.get_repo_size(repo)
@@ -399,13 +437,13 @@ def check_repo_status(github: GitHubClient, repos: List[str], current_index: int
             elif size_kb * 1024 >= WARNING_SIZE:
                 status = " [接近滿]"
             
-            print(f"[{i}] {repo:30s}: {size_str:>10s} / 1 GB  ({percent:5.1f}%){status}{marker}")
+            logger.info(f"[{i}] {repo:30s}: {size_str:>10s} / 1 GB  ({percent:5.1f}%){status}{marker}")
         else:
-            print(f"[{i}] {repo:30s}: 無法取得資訊")
+            logger.info(f"[{i}] {repo:30s}: 無法取得資訊")
         
         time.sleep(API_DELAY)
     
-    print("-" * 50)
+    logger.info("-" * 50)
     
     # 檢查當前 repo 容量
     current_repo = repos[current_index]
@@ -413,12 +451,12 @@ def check_repo_status(github: GitHubClient, repos: List[str], current_index: int
     if current_size_kb:
         current_size_bytes = current_size_kb * 1024
         if current_size_bytes >= CRITICAL_SIZE:
-            print("!! 警告：當前 repo 已超過 1GB，請切換到下一個 repo !!")
-            print(f"   修改 {ENV_FILE} 中的 CURRENT_REPO_INDEX={current_index + 1}")
+            logger.warning("!! 當前 repo 已超過 1GB，請切換到下一個 repo !!")
+            logger.warning(f"   修改 {ENV_FILE} 中的 CURRENT_REPO_INDEX={current_index + 1}")
         elif current_size_bytes >= WARNING_SIZE:
-            print("提示：當前 repo 接近容量限制，建議準備切換")
+            logger.info("提示：當前 repo 接近容量限制，建議準備切換")
     
-    print("=" * 50)
+    logger.info("=" * 50)
 
 
 def process_markdown_file(
@@ -446,7 +484,7 @@ def process_markdown_file(
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
     except Exception as e:
-        print(f"錯誤：無法讀取檔案 - {e}")
+        logger.error(f"無法讀取檔案 - {e}")
         return (0, 0, 1)
     
     original_content = content
@@ -462,7 +500,7 @@ def process_markdown_file(
     if not images:
         return (0, 0, 0)
     
-    print(f"  找到 {len(images)} 個圖片連結")
+    logger.info(f"  找到 {len(images)} 個圖片連結")
     
     for full_match, alt_text, url in images:
         # 檢查是否已經是 PicBed URL
@@ -477,7 +515,7 @@ def process_markdown_file(
             # 檢查是否為失敗記錄
             if mapping.get('status') == 'failed':
                 skipped += 1
-                print(f"    [已失敗] {url[:60]}... (跳過)")
+                logger.debug(f"    [已失敗] {url[:60]}... (跳過)")
                 continue
             
             # 使用已有的映射
@@ -485,10 +523,10 @@ def process_markdown_file(
             new_match = full_match.replace(url, new_url)
             content = content.replace(full_match, new_match)
             skipped += 1
-            print(f"    [已映射] {url[:60]}...")
+            logger.debug(f"    [已映射] {url[:60]}...")
             continue
         
-        print(f"    處理: {url[:60]}...")
+        logger.info(f"    處理: {url[:60]}...")
         
         # 下載或讀取圖片
         image_data = None
@@ -505,7 +543,7 @@ def process_markdown_file(
                     'status': 'failed',
                     'failed_at': datetime.now().isoformat()
                 }
-            print(f"    [失敗] 已記錄，下次將跳過")
+            logger.warning(f"    [失敗] 已記錄，下次將跳過")
             continue
         
         image_content, ext = image_data
@@ -516,7 +554,7 @@ def process_markdown_file(
         upload_path = f"{upload_dir}/{new_filename}"
         
         if dry_run:
-            print(f"    [預覽] 將上傳到: {repo}/{upload_path}")
+            logger.info(f"    [預覽] 將上傳到: {repo}/{upload_path}")
             processed += 1
             continue
         
@@ -542,10 +580,10 @@ def process_markdown_file(
             }
             
             processed += 1
-            print(f"    [成功] -> {new_url}")
+            logger.info(f"    [成功] -> {new_url}")
         else:
             failed += 1
-            print(f"    [失敗] 無法上傳")
+            logger.error(f"    [失敗] 無法上傳")
         
         time.sleep(API_DELAY)
     
@@ -559,7 +597,7 @@ def process_markdown_file(
                 with open(backup_path, 'w', encoding='utf-8') as f:
                     f.write(original_content)
             except Exception as e:
-                print(f"警告：無法建立備份 - {e}")
+                logger.warning(f"無法建立備份 - {e}")
                 backup_path = None
         
         # 寫入新內容
@@ -567,11 +605,11 @@ def process_markdown_file(
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
             if backup_path:
-                print(f"  已更新檔案（備份: {backup_path}）")
+                logger.info(f"  已更新檔案（備份: {backup_path}）")
             else:
-                print(f"  已更新檔案")
+                logger.info(f"  已更新檔案")
         except Exception as e:
-            print(f"錯誤：無法寫入檔案 - {e}")
+            logger.error(f"無法寫入檔案 - {e}")
             # 嘗試還原
             try:
                 with open(filepath, 'w', encoding='utf-8') as f:
@@ -583,15 +621,21 @@ def process_markdown_file(
 
 
 def main():
+    global logger
+    
     parser = argparse.ArgumentParser(description='PicBed Markdown 圖片同步腳本')
     parser.add_argument('--dry-run', action='store_true', help='預覽模式，不實際修改')
     parser.add_argument('--force', action='store_true', help='強制重新處理所有檔案')
     parser.add_argument('--status', action='store_true', help='檢查所有 PicBed repo 的容量狀態')
+    parser.add_argument('--verbose', '-v', action='store_true', help='顯示詳細輸出')
     args = parser.parse_args()
     
-    print("=" * 50)
-    print("PicBed Markdown 圖片同步腳本")
-    print("=" * 50)
+    # 設定 logging
+    logger = setup_logging(verbose=args.verbose)
+    
+    logger.info("=" * 50)
+    logger.info("PicBed Markdown 圖片同步腳本")
+    logger.info("=" * 50)
     
     # 載入設定
     config = load_config()
@@ -601,7 +645,7 @@ def main():
     enable_backup = config.get('ENABLE_BACKUP', 'false').lower() in ('true', '1', 'yes')
     
     if current_index >= len(picbed_repos):
-        print(f"錯誤：CURRENT_REPO_INDEX ({current_index}) 超出範圍")
+        logger.error(f"CURRENT_REPO_INDEX ({current_index}) 超出範圍")
         exit(1)
     
     current_repo = picbed_repos[current_index]
@@ -615,34 +659,35 @@ def main():
         return
     
     # 顯示當前設定
-    print(f"當前 PicBed Repo: {current_repo}")
-    print(f"Branch: {branch}")
-    print(f"備份功能: {'啟用' if enable_backup else '關閉'}")
+    logger.info(f"當前 PicBed Repo: {current_repo}")
+    logger.info(f"Branch: {branch}")
+    logger.info(f"備份功能: {'啟用' if enable_backup else '關閉'}")
+    logger.info(f"Log 檔案: {LOG_FILE}")
     if args.dry_run:
-        print("模式: 預覽模式（不實際修改）")
+        logger.info("模式: 預覽模式（不實際修改）")
     if args.force:
-        print("模式: 強制重新處理")
-    print("-" * 50)
+        logger.info("模式: 強制重新處理")
+    logger.info("-" * 50)
     
     # 檢查當前 repo 容量
     size_kb = github.get_repo_size(current_repo)
     if size_kb:
         size_bytes = size_kb * 1024
         size_mb = size_kb / 1024
-        print(f"當前 Repo 容量: {size_mb:.1f} MB")
+        logger.info(f"當前 Repo 容量: {size_mb:.1f} MB")
         
         if size_bytes >= CRITICAL_SIZE:
-            print("!! 警告：當前 repo 已超過 1GB !!")
-            print(f"請修改 {ENV_FILE} 中的 CURRENT_REPO_INDEX 切換到下一個 repo")
+            logger.warning("!! 當前 repo 已超過 1GB !!")
+            logger.warning(f"請修改 {ENV_FILE} 中的 CURRENT_REPO_INDEX 切換到下一個 repo")
             if not args.dry_run:
                 response = input("是否繼續執行？(y/N): ")
                 if response.lower() != 'y':
-                    print("已取消")
+                    logger.info("已取消")
                     return
         elif size_bytes >= WARNING_SIZE:
-            print("提示：當前 repo 接近容量限制")
+            logger.info("提示：當前 repo 接近容量限制")
     
-    print("-" * 50)
+    logger.info("-" * 50)
     
     # 載入處理記錄
     processed_data = load_processed_data()
@@ -658,12 +703,12 @@ def main():
     
     # 掃描並處理
     for folder in folders:
-        print(f"\n掃描目錄: {folder}")
+        logger.info(f"\n掃描目錄: {folder}")
         
         folder_path = Path(folder)
         md_files = list(folder_path.rglob('*.md'))
         
-        print(f"找到 {len(md_files)} 個 .md 檔案")
+        logger.info(f"找到 {len(md_files)} 個 .md 檔案")
         
         for md_file in md_files:
             md_path = str(md_file)
@@ -675,10 +720,10 @@ def main():
             if not args.force:
                 file_record = processed_data.get('files', {}).get(md_path)
                 if file_record and file_record.get('hash') == file_hash:
-                    print(f"\n[跳過] {md_file.name} (未變更)")
+                    logger.debug(f"\n[跳過] {md_file.name} (未變更)")
                     continue
             
-            print(f"\n[處理] {md_file.name}")
+            logger.info(f"\n[處理] {md_file.name}")
             total_files += 1
             
             processed, skipped, failed = process_markdown_file(
@@ -705,16 +750,18 @@ def main():
                 save_processed_data(processed_data)
     
     # 顯示結果
-    print("\n" + "=" * 50)
-    print("處理完成")
-    print("=" * 50)
-    print(f"處理檔案數: {total_files}")
-    print(f"上傳圖片數: {total_processed}")
-    print(f"跳過圖片數: {total_skipped}")
-    print(f"失敗圖片數: {total_failed}")
+    logger.info("\n" + "=" * 50)
+    logger.info("處理完成")
+    logger.info("=" * 50)
+    logger.info(f"處理檔案數: {total_files}")
+    logger.info(f"上傳圖片數: {total_processed}")
+    logger.info(f"跳過圖片數: {total_skipped}")
+    logger.info(f"失敗圖片數: {total_failed}")
     
     if args.dry_run:
-        print("\n（預覽模式，未實際執行）")
+        logger.info("\n（預覽模式，未實際執行）")
+    
+    logger.info(f"\n詳細日誌已儲存至: {LOG_FILE}")
 
 
 if __name__ == '__main__':
