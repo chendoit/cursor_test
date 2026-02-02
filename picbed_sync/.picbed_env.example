@@ -1,0 +1,50 @@
+# PicBed Markdown 圖片同步腳本 設定檔
+# 複製此檔案為 .picbed_env 並填入你的設定
+
+# ============================================
+# GitHub 認證
+# ============================================
+# 你的 GitHub Personal Access Token
+# 需要有 repo 權限（可讀寫 repository）
+# 取得方式: GitHub Settings -> Developer settings -> Personal access tokens -> Tokens (classic)
+# 建議選擇 "repo" 權限
+GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+
+# ============================================
+# PicBed Repositories
+# ============================================
+# 支援多個 repo，使用 PICBED_REPO_000 到 PICBED_REPO_999
+# 當第一個 repo 接近容量限制時，可新增更多 repo
+# 格式: owner/repo
+PICBED_REPO_000=chendoit/PicBed
+# PICBED_REPO_001=chendoit/PicBed2
+# PICBED_REPO_002=chendoit/PicBed3
+
+# 目前使用的 repo 索引（從 0 開始）
+# 當 PICBED_REPO_000 滿了（超過 1GB），修改為 1 使用 PICBED_REPO_001
+CURRENT_REPO_INDEX=0
+
+# Branch（所有 repo 使用相同 branch）
+PICBED_BRANCH=main
+
+# ============================================
+# 要掃描的目錄
+# ============================================
+# 使用 FOLDER_000 到 FOLDER_999 來設定（最多 1000 個）
+# 腳本會遞迴掃描目錄內所有 .md 檔案
+#
+# Windows 路徑範例:
+#   FOLDER_000=C:/Users/username/Documents/notes
+#   FOLDER_001=D:/obsidian-vault
+#
+# 注意：建議使用正斜線 / 而非反斜線 \
+FOLDER_000=C:/path/to/your/markdown/folder
+# FOLDER_001=D:/another/folder
+# FOLDER_002=E:/more/folders
+
+# ============================================
+# 備份設定
+# ============================================
+# 是否在修改 .md 檔案前建立 .bak 備份檔
+# true = 啟用備份, false = 不備份 (預設)
+ENABLE_BACKUP=false

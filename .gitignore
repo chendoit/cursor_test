@@ -6,6 +6,9 @@
 .env_thefew
 .env_hyread
 .env_fugle
+.env_git_sync
+.picbed_env
+.picbed_processed.json
 
 # Cookies（登入資訊）
 *_cookies.json
