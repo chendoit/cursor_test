@@ -472,8 +472,16 @@ def process_markdown_file(
         
         # 檢查 URL 映射中是否已處理過
         if url in processed_data.get('url_mapping', {}):
+            mapping = processed_data['url_mapping'][url]
+            
+            # 檢查是否為失敗記錄
+            if mapping.get('status') == 'failed':
+                skipped += 1
+                print(f"    [已失敗] {url[:60]}... (跳過)")
+                continue
+            
             # 使用已有的映射
-            new_url = processed_data['url_mapping'][url]['new_url']
+            new_url = mapping['new_url']
             new_match = full_match.replace(url, new_url)
             content = content.replace(full_match, new_match)
             skipped += 1
@@ -491,6 +499,13 @@ def process_markdown_file(
         
         if not image_data:
             failed += 1
+            # 記錄失敗的 URL，下次不再重試
+            if not dry_run:
+                processed_data.setdefault('url_mapping', {})[url] = {
+                    'status': 'failed',
+                    'failed_at': datetime.now().isoformat()
+                }
+            print(f"    [失敗] 已記錄，下次將跳過")
             continue
         
         image_content, ext = image_data
@@ -681,8 +696,8 @@ def main():
             total_skipped += skipped
             total_failed += failed
             
-            # 更新檔案記錄
-            if not args.dry_run and (processed > 0 or skipped > 0):
+            # 更新檔案記錄（包含失敗的情況，避免重複處理）
+            if not args.dry_run and (processed > 0 or skipped > 0 or failed > 0):
                 processed_data.setdefault('files', {})[md_path] = {
                     'hash': file_hash,
                     'last_processed': datetime.now().isoformat()
